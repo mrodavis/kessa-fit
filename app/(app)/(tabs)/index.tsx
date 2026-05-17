@@ -1,9 +1,11 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, RefreshControl } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
+import { UNIT_KEY } from '@/constants';
 
 interface ActiveWorkout {
   id: string;
@@ -81,15 +83,19 @@ export default function HomeScreen() {
   const [activeWorkout, setActiveWorkout] = useState<ActiveWorkout | null>(null);
   const [workouts, setWorkouts] = useState<WorkoutCard[]>([]);
   const [activityDots, setActivityDots] = useState<ActivityDot[]>([]);
-  const [weekVolumeLbs, setWeekVolumeLbs] = useState(0);
+  const [weekVolumeKg, setWeekVolumeKg] = useState(0);
   const [weekWorkoutCount, setWeekWorkoutCount] = useState(0);
   const [streak, setStreak] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [useLbs, setUseLbs] = useState(true);
 
   const firstName = user?.user_metadata?.full_name?.split(' ')[0] ?? 'Athlete';
 
   const fetchData = useCallback(async () => {
     if (!user) return;
+
+    const unitVal = await AsyncStorage.getItem(UNIT_KEY).catch(() => null);
+    setUseLbs(unitVal !== 'kg');
 
     const weekAgo = new Date();
     weekAgo.setDate(weekAgo.getDate() - 7);
@@ -152,7 +158,7 @@ export default function HomeScreen() {
         0
       );
     }, 0);
-    setWeekVolumeLbs(Math.round(vol * 2.20462));
+    setWeekVolumeKg(vol);
 
     // Recent workout cards
     const rawRecent = (recentRes.data ?? []) as Array<{
@@ -252,7 +258,7 @@ export default function HomeScreen() {
             <Text className="text-white font-semibold text-lg">This Week</Text>
             <Text className="text-muted text-sm">
               {weekWorkoutCount} session{weekWorkoutCount !== 1 ? 's' : ''} ·{' '}
-              {weekVolumeLbs.toLocaleString()} lbs
+              {(useLbs ? Math.round(weekVolumeKg * 2.20462) : Math.round(weekVolumeKg)).toLocaleString()} {useLbs ? 'lbs' : 'kg'}
             </Text>
           </View>
           <View className="flex-row justify-between">
