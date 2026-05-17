@@ -97,9 +97,10 @@ export default function HomeScreen() {
     const unitVal = await AsyncStorage.getItem(UNIT_KEY).catch(() => null);
     setUseLbs(unitVal !== 'kg');
 
-    const weekAgo = new Date();
-    weekAgo.setDate(weekAgo.getDate() - 7);
-    weekAgo.setHours(0, 0, 0, 0);
+    const todayMidnight = new Date();
+    todayMidnight.setHours(0, 0, 0, 0);
+    const weekStart = new Date(todayMidnight);
+    weekStart.setDate(todayMidnight.getDate() - todayMidnight.getDay()); // back to Sunday
 
     const [activeRes, weekRes, recentRes, streakRes] = await Promise.all([
       supabase
@@ -116,7 +117,7 @@ export default function HomeScreen() {
         .select('id, started_at, workout_sets(reps, weight_kg)')
         .eq('user_id', user.id)
         .not('finished_at', 'is', null)
-        .gte('started_at', weekAgo.toISOString()),
+        .gte('started_at', weekStart.toISOString()),
 
       supabase
         .from('workouts')
@@ -145,8 +146,8 @@ export default function HomeScreen() {
     }>;
     const trainedDates = new Set(weekData.map(w => new Date(w.started_at).toDateString()));
     const dots = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date();
-      d.setDate(d.getDate() - (6 - i));
+      const d = new Date(weekStart);
+      d.setDate(weekStart.getDate() + i);
       return { date: d, trained: trainedDates.has(d.toDateString()) };
     });
     setActivityDots(dots);
