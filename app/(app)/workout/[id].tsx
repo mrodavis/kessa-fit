@@ -89,6 +89,11 @@ export default function WorkoutDetailScreen() {
   const [templateName, setTemplateName] = useState('');
   const [savingTemplate, setSavingTemplate] = useState(false);
 
+  const [editWorkoutVisible, setEditWorkoutVisible] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [editWorkoutSaving, setEditWorkoutSaving] = useState(false);
+
   const [pickerVisible, setPickerVisible] = useState(false);
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -261,6 +266,34 @@ export default function WorkoutDetailScreen() {
     Alert.alert('Saved', `"${templateName.trim()}" saved as a template.`);
   };
 
+  const saveWorkoutEdit = async () => {
+    if (!editName.trim()) return;
+    setEditWorkoutSaving(true);
+    const { error } = await supabase
+      .from('workouts')
+      .update({ name: editName.trim(), notes: editNotes.trim() || null })
+      .eq('id', id);
+    setEditWorkoutSaving(false);
+    if (error) { Alert.alert('Error', error.message); return; }
+    setWorkout(prev => prev ? { ...prev, name: editName.trim(), notes: editNotes.trim() || null } : prev);
+    setEditWorkoutVisible(false);
+  };
+
+  const deleteWorkout = () => {
+    Alert.alert('Delete Workout', 'This will permanently delete this workout and all its sets.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          await supabase.from('workout_sets').delete().eq('workout_id', id);
+          await supabase.from('workouts').delete().eq('id', id);
+          router.back();
+        },
+      },
+    ]);
+  };
+
   const selectNewExercise = (ex: Exercise) => {
     setPickerVisible(false);
     const existingGroup = groups.find(g => g.exerciseId === ex.id);
@@ -357,7 +390,18 @@ export default function WorkoutDetailScreen() {
         </View>
 
         <View className="px-6 pb-6">
-          <Text className="text-white text-2xl font-bold tracking-tight">{workout.name}</Text>
+          <View className="flex-row items-start justify-between">
+            <Text className="text-white text-2xl font-bold tracking-tight flex-1 mr-4">
+              {workout.name}
+            </Text>
+            <TouchableOpacity
+              onPress={() => { setEditName(workout.name); setEditNotes(workout.notes ?? ''); setEditWorkoutVisible(true); }}
+              className="mt-1"
+              activeOpacity={0.7}
+            >
+              <Text className="text-muted text-sm">Edit</Text>
+            </TouchableOpacity>
+          </View>
           <Text className="text-muted text-sm mt-1">{formatDate(workout.started_at)}</Text>
         </View>
 
@@ -382,6 +426,14 @@ export default function WorkoutDetailScreen() {
             <Text className="text-muted text-xs mt-1">Volume ({useLbs ? 'lbs' : 'kg'})</Text>
           </View>
         </View>
+
+        {/* Notes */}
+        {workout.notes ? (
+          <View className="mx-6 mb-6 bg-card border border-border rounded-2xl px-4 py-4">
+            <Text className="text-muted text-xs font-semibold uppercase tracking-widest mb-2">Notes</Text>
+            <Text className="text-white text-sm">{workout.notes}</Text>
+          </View>
+        ) : null}
 
         {/* Exercises */}
         <View className="px-6">
@@ -497,6 +549,62 @@ export default function WorkoutDetailScreen() {
           </TouchableOpacity>
         </View>
       </ScrollView>
+
+      {/* ── Edit Workout Modal ── */}
+      <Modal visible={editWorkoutVisible} transparent animationType="slide">
+        <View className="flex-1 justify-end bg-black/60">
+          <View className="bg-surface rounded-t-3xl px-6 pt-6 pb-10 border-t border-border">
+            <Text className="text-white font-bold text-xl mb-6">Edit Workout</Text>
+
+            <Text className="text-textSecondary text-sm mb-2 ml-1">Workout Name</Text>
+            <TextInput
+              className="bg-card text-white px-4 py-4 rounded-2xl text-base border border-border mb-4"
+              value={editName}
+              onChangeText={setEditName}
+              autoFocus
+              returnKeyType="done"
+            />
+
+            <Text className="text-textSecondary text-sm mb-2 ml-1">Notes</Text>
+            <TextInput
+              className="bg-card text-white px-4 py-3 rounded-2xl text-base border border-border mb-6"
+              value={editNotes}
+              onChangeText={setEditNotes}
+              placeholder="Add notes..."
+              placeholderTextColor="#8e8e93"
+              multiline
+              style={{ minHeight: 80, textAlignVertical: 'top' }}
+            />
+
+            <TouchableOpacity
+              className="bg-primary rounded-2xl py-4 items-center mb-3"
+              onPress={saveWorkoutEdit}
+              disabled={editWorkoutSaving || !editName.trim()}
+              activeOpacity={0.85}
+            >
+              {editWorkoutSaving ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text className="text-white font-semibold text-base">Save</Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              className="py-3 items-center"
+              onPress={() => setEditWorkoutVisible(false)}
+            >
+              <Text className="text-muted text-base">Cancel</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              className="py-2 items-center"
+              onPress={() => { setEditWorkoutVisible(false); deleteWorkout(); }}
+            >
+              <Text className="text-danger text-sm">Delete Workout</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* ── Edit Set Modal ── */}
       <Modal visible={editingSet !== null} transparent animationType="slide">
