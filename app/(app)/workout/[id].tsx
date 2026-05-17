@@ -14,6 +14,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/hooks/useAuth';
 import { UNIT_KEY } from '@/constants';
 
 interface WorkoutSet {
@@ -66,6 +67,7 @@ function formatDate(dateStr: string): string {
 export default function WorkoutDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const { user } = useAuth();
 
   const [workout, setWorkout] = useState<WorkoutDetail | null>(null);
   const [groups, setGroups] = useState<GroupedExercise[]>([]);
@@ -82,6 +84,10 @@ export default function WorkoutDetailScreen() {
   const [addWeight, setAddWeight] = useState('');
   const [addReps, setAddReps] = useState('');
   const [addSaving, setAddSaving] = useState(false);
+
+  const [saveTemplateVisible, setSaveTemplateVisible] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const [savingTemplate, setSavingTemplate] = useState(false);
 
   const [pickerVisible, setPickerVisible] = useState(false);
   const [exercises, setExercises] = useState<Exercise[]>([]);
@@ -226,6 +232,33 @@ export default function WorkoutDetailScreen() {
         },
       },
     ]);
+  };
+
+  const saveAsTemplate = async () => {
+    if (!user || !templateName.trim()) return;
+    setSavingTemplate(true);
+
+    const { data: tmpl, error } = await supabase
+      .from('workout_templates')
+      .insert({ user_id: user.id, name: templateName.trim() })
+      .select('id')
+      .single();
+
+    if (error) { Alert.alert('Error', error.message); setSavingTemplate(false); return; }
+
+    await supabase.from('workout_template_exercises').insert(
+      groups.map((g, i) => ({
+        template_id: tmpl.id,
+        exercise_id: g.exerciseId,
+        exercise_name: g.name,
+        sets: g.sets.length,
+        position: i,
+      }))
+    );
+
+    setSavingTemplate(false);
+    setSaveTemplateVisible(false);
+    Alert.alert('Saved', `"${templateName.trim()}" saved as a template.`);
   };
 
   const selectNewExercise = (ex: Exercise) => {
@@ -454,6 +487,14 @@ export default function WorkoutDetailScreen() {
           >
             <Text className="text-primary text-sm font-medium">+ Add Exercise</Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            className="py-4 items-center"
+            onPress={() => { setTemplateName(workout?.name ?? ''); setSaveTemplateVisible(true); }}
+            activeOpacity={0.7}
+          >
+            <Text className="text-muted text-xs">Save as Template</Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
 
@@ -582,6 +623,42 @@ export default function WorkoutDetailScreen() {
               className="py-3 items-center"
               onPress={() => setAddingToGroup(null)}
             >
+              <Text className="text-muted text-base">Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Save as Template Modal ── */}
+      <Modal visible={saveTemplateVisible} transparent animationType="slide">
+        <View className="flex-1 justify-end bg-black/60">
+          <View className="bg-surface rounded-t-3xl px-6 pt-6 pb-10 border-t border-border">
+            <Text className="text-white font-bold text-xl mb-1">Save as Template</Text>
+            <Text className="text-muted text-sm mb-6">
+              {groups.length} exercise{groups.length !== 1 ? 's' : ''} will be saved
+            </Text>
+            <Text className="text-textSecondary text-sm mb-2 ml-1">Template Name</Text>
+            <TextInput
+              className="bg-card text-white px-4 py-4 rounded-2xl text-base border border-border mb-6"
+              placeholder="e.g. Push Day"
+              placeholderTextColor="#8e8e93"
+              value={templateName}
+              onChangeText={setTemplateName}
+              autoFocus
+            />
+            <TouchableOpacity
+              className="bg-primary rounded-2xl py-4 items-center mb-3"
+              onPress={saveAsTemplate}
+              disabled={savingTemplate || !templateName.trim()}
+              activeOpacity={0.85}
+            >
+              {savingTemplate ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text className="text-white font-semibold text-base">Save Template</Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity className="py-3 items-center" onPress={() => setSaveTemplateVisible(false)}>
               <Text className="text-muted text-base">Cancel</Text>
             </TouchableOpacity>
           </View>

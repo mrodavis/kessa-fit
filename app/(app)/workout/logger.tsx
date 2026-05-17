@@ -42,7 +42,7 @@ interface LoggedSet {
 }
 
 export default function WorkoutLoggerScreen() {
-  const { workoutId, workoutName } = useLocalSearchParams<{ workoutId: string; workoutName: string }>();
+  const { workoutId, workoutName, templateId } = useLocalSearchParams<{ workoutId: string; workoutName: string; templateId?: string }>();
   const router = useRouter();
   const { user } = useAuth();
 
@@ -71,6 +71,13 @@ export default function WorkoutLoggerScreen() {
   const [editReps, setEditReps] = useState('');
   const [editSaving, setEditSaving] = useState(false);
 
+  // Template plan
+  const [templateExercises, setTemplateExercises] = useState<Array<{
+    exerciseId: string;
+    exerciseName: string;
+    targetSets: number;
+  }>>([]);
+
   // Exercise picker
   const [pickerVisible, setPickerVisible] = useState(false);
   const [exercises, setExercises] = useState<Exercise[]>([]);
@@ -81,6 +88,22 @@ export default function WorkoutLoggerScreen() {
     const interval = setInterval(() => setElapsed((s) => s + 1), 1000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (!templateId) return;
+    supabase
+      .from('workout_template_exercises')
+      .select('exercise_id, exercise_name, sets')
+      .eq('template_id', templateId)
+      .order('position')
+      .then(({ data }) => {
+        if (data) setTemplateExercises(data.map(e => ({
+          exerciseId: e.exercise_id,
+          exerciseName: e.exercise_name,
+          targetSets: e.sets,
+        })));
+      });
+  }, [templateId]);
 
   useEffect(() => {
     if (restSecondsLeft === null) return;
@@ -380,6 +403,44 @@ export default function WorkoutLoggerScreen() {
           <Text className="text-white font-semibold text-sm">Finish</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Template Plan Bar */}
+      {templateExercises.length > 0 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          className="border-b border-border"
+          contentContainerStyle={{ paddingHorizontal: 24, paddingVertical: 12, gap: 8 }}
+        >
+          {templateExercises.map(te => {
+            const logged = sets.filter(s => s.exerciseId === te.exerciseId).length;
+            const done = logged >= te.targetSets;
+            return (
+              <TouchableOpacity
+                key={te.exerciseId}
+                className={`px-3 py-2 rounded-xl border mr-2 ${done ? 'border-success/40' : 'bg-card border-border'}`}
+                style={done ? { backgroundColor: '#052e16' } : undefined}
+                onPress={() => {
+                  setSelectedExercise({ id: te.exerciseId, name: te.exerciseName, muscle_group: null, equipment: null });
+                  setReps('');
+                  setWeight('');
+                  setRestSecondsLeft(null);
+                  setAddModalVisible(true);
+                }}
+                activeOpacity={0.7}
+              >
+                <Text
+                  className={`text-xs font-semibold ${done ? 'text-success' : 'text-white'}`}
+                  numberOfLines={1}
+                >
+                  {te.exerciseName}
+                </Text>
+                <Text className="text-muted text-xs">{logged}/{te.targetSets} sets</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      )}
 
       {/* Set List */}
       <ScrollView className="flex-1 px-6 pt-4" showsVerticalScrollIndicator={false}>
