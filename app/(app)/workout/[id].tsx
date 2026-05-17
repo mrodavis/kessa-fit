@@ -93,6 +93,7 @@ export default function WorkoutDetailScreen() {
         setTotalVolume(Math.round(vol * 2.20462));
       }
 
+
       setLoading(false);
     };
 
@@ -161,44 +162,66 @@ export default function WorkoutDetailScreen() {
               <Text className="text-muted text-sm text-center">No sets were logged.</Text>
             </View>
           ) : (
-            groups.map((group) => (
-              <View key={group.name} className="mb-6">
-                <View className="flex-row items-baseline justify-between mb-3">
-                  <Text className="text-white font-semibold text-base">{group.name}</Text>
-                  {group.muscleGroup && (
-                    <Text className="text-muted text-xs">{group.muscleGroup}</Text>
-                  )}
-                </View>
-
-                {/* Column headers */}
-                <View className="flex-row mb-2 px-1">
-                  <Text className="text-muted text-xs w-10">SET</Text>
-                  <Text className="text-muted text-xs flex-1 text-center">WEIGHT</Text>
-                  <Text className="text-muted text-xs flex-1 text-center">REPS</Text>
-                  <Text className="text-muted text-xs flex-1 text-right">VOLUME</Text>
-                </View>
-
-                {group.sets.map((set) => (
-                  <View
-                    key={set.id}
-                    className="flex-row items-center bg-card rounded-xl px-4 py-3 mb-2 border border-border"
-                  >
-                    <Text className="text-muted text-sm w-10">{set.set_number}</Text>
-                    <Text className="text-white text-sm flex-1 text-center">
-                      {set.weight_kg != null ? `${Math.round(set.weight_kg * 2.20462)} lbs` : '—'}
-                    </Text>
-                    <Text className="text-white text-sm flex-1 text-center">
-                      {set.reps ?? '—'}
-                    </Text>
-                    <Text className="text-muted text-sm flex-1 text-right">
-                      {set.weight_kg && set.reps
-                        ? `${Math.round(set.weight_kg * set.reps * 2.20462)} lbs`
-                        : '—'}
-                    </Text>
+            groups.map((group) => {
+              const bestWeight = Math.max(
+                0,
+                ...group.sets.map(s => s.weight_kg ?? 0)
+              );
+              return (
+                <View key={group.name} className="mb-6">
+                  <View className="flex-row items-baseline justify-between mb-3">
+                    <Text className="text-white font-semibold text-base">{group.name}</Text>
+                    {group.muscleGroup && (
+                      <Text className="text-muted text-xs">{group.muscleGroup}</Text>
+                    )}
                   </View>
-                ))}
-              </View>
-            ))
+
+                  {/* Column headers */}
+                  <View className="flex-row mb-2 px-1">
+                    <Text className="text-muted text-xs w-10">SET</Text>
+                    <Text className="text-muted text-xs flex-1 text-center">WEIGHT</Text>
+                    <Text className="text-muted text-xs flex-1 text-center">REPS</Text>
+                    <Text className="text-muted text-xs flex-1 text-right">VOLUME</Text>
+                  </View>
+
+                  {group.sets.map((set) => {
+                    const isBest =
+                      bestWeight > 0 &&
+                      set.weight_kg != null &&
+                      set.weight_kg === bestWeight;
+                    return (
+                      <View
+                        key={set.id}
+                        className={`flex-row items-center rounded-xl px-4 py-3 mb-2 border ${
+                          isBest ? 'border-primary/40' : 'bg-card border-border'
+                        }`}
+                        style={isBest ? { backgroundColor: '#0f0f2e' } : undefined}
+                      >
+                        <Text className="text-muted text-sm w-10">{set.set_number}</Text>
+                        <View className="flex-1 flex-row items-center justify-center">
+                          <Text className="text-white text-sm text-center">
+                            {set.weight_kg != null
+                              ? `${Math.round(set.weight_kg * 2.20462)} lbs`
+                              : '—'}
+                          </Text>
+                          {isBest && (
+                            <Text className="text-primary text-xs ml-1">★</Text>
+                          )}
+                        </View>
+                        <Text className="text-white text-sm flex-1 text-center">
+                          {set.reps ?? '—'}
+                        </Text>
+                        <Text className="text-muted text-sm flex-1 text-right">
+                          {set.weight_kg && set.reps
+                            ? `${Math.round(set.weight_kg * set.reps * 2.20462)} lbs`
+                            : '—'}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              );
+            })
           )}
         </View>
       </ScrollView>

@@ -10,9 +10,11 @@ import {
   FlatList,
   ActivityIndicator,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
+import { UNIT_KEY } from '../(tabs)/profile';
 
 interface Exercise {
   id: string;
@@ -37,6 +39,7 @@ export default function WorkoutLoggerScreen() {
 
   const [sets, setSets] = useState<LoggedSet[]>([]);
   const [elapsed, setElapsed] = useState(0);
+  const [useLbs, setUseLbs] = useState(true);
 
   // Add set modal
   const [addModalVisible, setAddModalVisible] = useState(false);
@@ -54,6 +57,12 @@ export default function WorkoutLoggerScreen() {
   useEffect(() => {
     const interval = setInterval(() => setElapsed((s) => s + 1), 1000);
     return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    AsyncStorage.getItem(UNIT_KEY)
+      .then(val => { if (val !== null) setUseLbs(val === 'lbs'); })
+      .catch(() => {});
   }, []);
 
   const formatTime = (seconds: number) => {
@@ -102,6 +111,11 @@ export default function WorkoutLoggerScreen() {
     const setsForExercise = sets.filter((s) => s.exerciseId === selectedExercise.id).length;
     const setNumber = setsForExercise + 1;
 
+    const rawWeight = weight ? parseFloat(weight) : null;
+    const weightKg = rawWeight != null
+      ? (useLbs ? rawWeight / 2.20462 : rawWeight)
+      : null;
+
     const { data, error } = await supabase
       .from('workout_sets')
       .insert({
@@ -109,7 +123,7 @@ export default function WorkoutLoggerScreen() {
         exercise_id: selectedExercise.id,
         set_number: setNumber,
         reps: reps ? parseInt(reps) : null,
-        weight_kg: weight ? parseFloat(weight) : null,
+        weight_kg: weightKg,
       })
       .select()
       .single();
@@ -150,7 +164,7 @@ export default function WorkoutLoggerScreen() {
             .from('workouts')
             .update({ finished_at: new Date().toISOString() })
             .eq('id', workoutId);
-          router.replace('/(app)/dashboard');
+          router.replace('/(app)/(tabs)');
         },
       },
     ]);
@@ -193,7 +207,9 @@ export default function WorkoutLoggerScreen() {
               <Text className="text-white font-semibold text-base mb-3">{exercise}</Text>
               <View className="flex-row mb-2 px-1">
                 <Text className="text-muted text-xs w-10">SET</Text>
-                <Text className="text-muted text-xs flex-1 text-center">WEIGHT (kg)</Text>
+                <Text className="text-muted text-xs flex-1 text-center">
+                  WEIGHT ({useLbs ? 'LBS' : 'KG'})
+                </Text>
                 <Text className="text-muted text-xs flex-1 text-center">REPS</Text>
               </View>
               {exerciseSets.map((set) => (
@@ -254,7 +270,9 @@ export default function WorkoutLoggerScreen() {
 
             <View className="flex-row gap-x-3 mb-6">
               <View className="flex-1">
-                <Text className="text-textSecondary text-sm mb-2 ml-1">Weight (kg)</Text>
+                <Text className="text-textSecondary text-sm mb-2 ml-1">
+                  Weight ({useLbs ? 'lbs' : 'kg'})
+                </Text>
                 <TextInput
                   className="bg-card text-white px-4 py-4 rounded-2xl text-base border border-border"
                   placeholder="0"
