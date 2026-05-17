@@ -38,6 +38,7 @@ interface LoggedSet {
   setNumber: number;
   reps: string;
   weightKg: string;
+  isBodyweight: boolean;
   saved: boolean;
 }
 
@@ -56,6 +57,7 @@ export default function WorkoutLoggerScreen() {
   const [reps, setReps] = useState('');
   const [weight, setWeight] = useState('');
   const [saving, setSaving] = useState(false);
+  const [isBodyweight, setIsBodyweight] = useState(false);
 
   // Last session reference
   const [lastSession, setLastSession] = useState<LastSession | null>(null);
@@ -70,6 +72,7 @@ export default function WorkoutLoggerScreen() {
   const [editWeight, setEditWeight] = useState('');
   const [editReps, setEditReps] = useState('');
   const [editSaving, setEditSaving] = useState(false);
+  const [editIsBodyweight, setEditIsBodyweight] = useState(false);
 
   // Template plan
   const [templateExercises, setTemplateExercises] = useState<Array<{
@@ -225,6 +228,7 @@ export default function WorkoutLoggerScreen() {
     setPickerVisible(false);
     setReps('');
     setWeight('');
+    setIsBodyweight(false);
   };
 
   const addSet = async () => {
@@ -237,7 +241,7 @@ export default function WorkoutLoggerScreen() {
     const setsForExercise = sets.filter((s) => s.exerciseId === selectedExercise.id).length;
     const setNumber = setsForExercise + 1;
 
-    const rawWeight = weight ? parseFloat(weight) : null;
+    const rawWeight = isBodyweight ? null : (weight ? parseFloat(weight) : null);
     const weightKg = rawWeight != null
       ? (useLbs ? rawWeight / 2.20462 : rawWeight)
       : null;
@@ -270,12 +274,14 @@ export default function WorkoutLoggerScreen() {
         setNumber,
         reps,
         weightKg: weight,
+        isBodyweight,
         saved: true,
       },
     ]);
 
     setReps('');
     setWeight('');
+    setIsBodyweight(false);
     setSelectedExercise(null);
     setLastSession(null);
     setAddModalVisible(false);
@@ -285,7 +291,7 @@ export default function WorkoutLoggerScreen() {
 
   const duplicateSet = async (set: LoggedSet) => {
     const newSetNumber = sets.filter(s => s.exerciseId === set.exerciseId).length + 1;
-    const rawWeight = set.weightKg ? parseFloat(set.weightKg) : null;
+    const rawWeight = set.isBodyweight ? null : (set.weightKg ? parseFloat(set.weightKg) : null);
     const weightKg = rawWeight != null ? (useLbs ? rawWeight / 2.20462 : rawWeight) : null;
 
     const { data, error } = await supabase
@@ -309,6 +315,7 @@ export default function WorkoutLoggerScreen() {
       setNumber: newSetNumber,
       reps: set.reps,
       weightKg: set.weightKg,
+      isBodyweight: set.isBodyweight,
       saved: true,
     }]);
     pulseAnim.setValue(0);
@@ -319,7 +326,7 @@ export default function WorkoutLoggerScreen() {
     if (!editingSet) return;
     setEditSaving(true);
 
-    const rawWeight = editWeight ? parseFloat(editWeight) : null;
+    const rawWeight = editIsBodyweight ? null : (editWeight ? parseFloat(editWeight) : null);
     const weightKg = rawWeight != null ? (useLbs ? rawWeight / 2.20462 : rawWeight) : null;
 
     const { error } = await supabase
@@ -331,7 +338,7 @@ export default function WorkoutLoggerScreen() {
     if (error) { Alert.alert('Error', error.message); return; }
 
     setSets(prev => prev.map(s =>
-      s.id === editingSet.id ? { ...s, reps: editReps, weightKg: editWeight } : s
+      s.id === editingSet.id ? { ...s, reps: editReps, weightKg: editWeight, isBodyweight: editIsBodyweight } : s
     ));
     setEditingSet(null);
   };
@@ -466,12 +473,12 @@ export default function WorkoutLoggerScreen() {
                 <TouchableOpacity
                   key={set.id}
                   className="flex-row items-center bg-card rounded-xl px-4 py-3 mb-2 border border-border"
-                  onPress={() => { setEditingSet(set); setEditWeight(set.weightKg); setEditReps(set.reps); }}
+                  onPress={() => { setEditingSet(set); setEditWeight(set.weightKg); setEditReps(set.reps); setEditIsBodyweight(set.isBodyweight); }}
                   activeOpacity={0.7}
                 >
                   <Text className="text-muted text-sm w-10">{set.setNumber}</Text>
                   <Text className="text-white text-sm flex-1 text-center">
-                    {set.weightKg || '—'}
+                    {set.isBodyweight ? 'BW' : set.weightKg || '—'}
                   </Text>
                   <Text className="text-white text-sm flex-1 text-center">
                     {set.reps || '—'}
@@ -605,7 +612,7 @@ export default function WorkoutLoggerScreen() {
                     <Text className="text-white text-xs font-medium">
                       {s.weightKg != null
                         ? `${useLbs ? Math.round(s.weightKg * 2.20462) : s.weightKg} ${useLbs ? 'lbs' : 'kg'}`
-                        : '—'}{' '}
+                        : 'BW'}{' '}
                       × {s.reps ?? '—'}
                     </Text>
                   </View>
@@ -613,18 +620,37 @@ export default function WorkoutLoggerScreen() {
               </View>
             )}
 
+            {/* Bodyweight toggle */}
+            <TouchableOpacity
+              className={`flex-row items-center justify-between px-4 py-3 rounded-xl border mb-4 ${isBodyweight ? 'border-primary/40' : 'border-border bg-card'}`}
+              style={isBodyweight ? { backgroundColor: '#0f0f2e' } : undefined}
+              onPress={() => { setIsBodyweight(b => !b); setWeight(''); }}
+              activeOpacity={0.7}
+            >
+              <Text className={`text-sm font-medium ${isBodyweight ? 'text-primary' : 'text-white'}`}>
+                Bodyweight
+              </Text>
+              <View
+                className={`w-5 h-5 rounded border items-center justify-center ${isBodyweight ? 'bg-primary border-primary' : 'border-border'}`}
+              >
+                {isBodyweight && <Text className="text-white text-xs font-bold">✓</Text>}
+              </View>
+            </TouchableOpacity>
+
             <View className="flex-row gap-x-3 mb-6">
               <View className="flex-1">
                 <Text className="text-textSecondary text-sm mb-2 ml-1">
-                  Weight ({useLbs ? 'lbs' : 'kg'})
+                  {isBodyweight ? 'Weight' : `Weight (${useLbs ? 'lbs' : 'kg'})`}
                 </Text>
                 <TextInput
                   className="bg-card text-white px-4 py-4 rounded-2xl text-base border border-border"
-                  placeholder="0"
-                  placeholderTextColor="#8e8e93"
-                  value={weight}
-                  onChangeText={setWeight}
+                  placeholder={isBodyweight ? 'BW' : '0'}
+                  placeholderTextColor={isBodyweight ? '#6366f1' : '#8e8e93'}
+                  value={isBodyweight ? '' : weight}
+                  onChangeText={isBodyweight ? undefined : setWeight}
                   keyboardType="decimal-pad"
+                  editable={!isBodyweight}
+                  style={isBodyweight ? { opacity: 0.5 } : undefined}
                 />
               </View>
               <View className="flex-1">
@@ -659,6 +685,7 @@ export default function WorkoutLoggerScreen() {
                 setAddModalVisible(false);
                 setSelectedExercise(null);
                 setLastSession(null);
+                setIsBodyweight(false);
               }}
             >
               <Text className="text-muted text-base">Cancel</Text>
@@ -676,19 +703,38 @@ export default function WorkoutLoggerScreen() {
               {editingSet?.exerciseName} · Set {editingSet?.setNumber}
             </Text>
 
+            {/* Bodyweight toggle */}
+            <TouchableOpacity
+              className={`flex-row items-center justify-between px-4 py-3 rounded-xl border mb-4 ${editIsBodyweight ? 'border-primary/40' : 'border-border bg-card'}`}
+              style={editIsBodyweight ? { backgroundColor: '#0f0f2e' } : undefined}
+              onPress={() => { setEditIsBodyweight(b => !b); setEditWeight(''); }}
+              activeOpacity={0.7}
+            >
+              <Text className={`text-sm font-medium ${editIsBodyweight ? 'text-primary' : 'text-white'}`}>
+                Bodyweight
+              </Text>
+              <View
+                className={`w-5 h-5 rounded border items-center justify-center ${editIsBodyweight ? 'bg-primary border-primary' : 'border-border'}`}
+              >
+                {editIsBodyweight && <Text className="text-white text-xs font-bold">✓</Text>}
+              </View>
+            </TouchableOpacity>
+
             <View className="flex-row gap-x-3 mb-6">
               <View className="flex-1">
                 <Text className="text-textSecondary text-sm mb-2 ml-1">
-                  Weight ({useLbs ? 'lbs' : 'kg'})
+                  {editIsBodyweight ? 'Weight' : `Weight (${useLbs ? 'lbs' : 'kg'})`}
                 </Text>
                 <TextInput
                   className="bg-card text-white px-4 py-4 rounded-2xl text-base border border-border"
-                  placeholder="0"
-                  placeholderTextColor="#8e8e93"
-                  value={editWeight}
-                  onChangeText={setEditWeight}
+                  placeholder={editIsBodyweight ? 'BW' : '0'}
+                  placeholderTextColor={editIsBodyweight ? '#6366f1' : '#8e8e93'}
+                  value={editIsBodyweight ? '' : editWeight}
+                  onChangeText={editIsBodyweight ? undefined : setEditWeight}
                   keyboardType="decimal-pad"
-                  autoFocus
+                  autoFocus={!editIsBodyweight}
+                  editable={!editIsBodyweight}
+                  style={editIsBodyweight ? { opacity: 0.5 } : undefined}
                 />
               </View>
               <View className="flex-1">

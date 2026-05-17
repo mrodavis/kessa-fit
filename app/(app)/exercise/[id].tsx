@@ -26,6 +26,7 @@ import { UNIT_KEY } from '@/constants';
 interface SessionPoint {
   date: string;
   maxWeightKg: number;
+  isBodyweight: boolean;
   totalSets: number;
 }
 
@@ -200,9 +201,11 @@ export default function ExerciseProgressScreen() {
         .filter(w => sets.some(s => s.workout_id === w.id))
         .map(w => {
           const ws = sets.filter(s => s.workout_id === w.id);
+          const isBW = ws.every(s => s.weight_kg === null);
           return {
             date: w.started_at,
-            maxWeightKg: Math.max(...ws.map(s => s.weight_kg ?? 0)),
+            maxWeightKg: isBW ? 0 : Math.max(...ws.map(s => s.weight_kg ?? 0)),
+            isBodyweight: isBW,
             totalSets: ws.length,
           };
         });
@@ -217,12 +220,14 @@ export default function ExerciseProgressScreen() {
   const displayWeight = (kg: number) =>
     useLbs ? `${Math.round(kg * 2.20462)} lbs` : `${kg} kg`;
 
-  const prKg = sessions.length ? Math.max(...sessions.map(s => s.maxWeightKg)) : 0;
-  const latestKg = sessions.length ? sessions[sessions.length - 1].maxWeightKg : 0;
-  const prevKg = sessions.length >= 2 ? sessions[sessions.length - 2].maxWeightKg : null;
+  const weightedSessions = sessions.filter(s => !s.isBodyweight);
+  const allBodyweight = sessions.length > 0 && weightedSessions.length === 0;
+  const prKg = weightedSessions.length ? Math.max(...weightedSessions.map(s => s.maxWeightKg)) : 0;
+  const latestKg = weightedSessions.length ? weightedSessions[weightedSessions.length - 1].maxWeightKg : 0;
+  const prevKg = weightedSessions.length >= 2 ? weightedSessions[weightedSessions.length - 2].maxWeightKg : null;
   const trendKg = prevKg != null ? latestKg - prevKg : null;
 
-  const chartData = sessions.slice(-12);
+  const chartData = weightedSessions.slice(-12);
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
@@ -258,7 +263,7 @@ export default function ExerciseProgressScreen() {
             {/* Stats */}
             <View className="flex-row px-6 mb-6" style={{ gap: 12 }}>
               <View className="flex-1 bg-card border border-border rounded-2xl px-4 py-4">
-                <Text className="text-white font-bold text-base">{displayWeight(prKg)}</Text>
+                <Text className="text-white font-bold text-base">{allBodyweight ? 'BW' : displayWeight(prKg)}</Text>
                 <Text className="text-muted text-xs mt-1">Personal Record</Text>
               </View>
               <View className="flex-1 bg-card border border-border rounded-2xl px-4 py-4">
@@ -319,7 +324,9 @@ export default function ExerciseProgressScreen() {
                         </Text>
                         <Text className="text-muted text-xs mt-0.5">{session.totalSets} sets</Text>
                       </View>
-                      <Text className="text-primary font-bold">{displayWeight(session.maxWeightKg)}</Text>
+                      <Text className="text-primary font-bold">
+                        {session.isBodyweight ? 'BW' : displayWeight(session.maxWeightKg)}
+                      </Text>
                     </View>
                   );
                 })}

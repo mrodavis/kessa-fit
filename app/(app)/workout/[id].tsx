@@ -79,11 +79,13 @@ export default function WorkoutDetailScreen() {
   const [editWeight, setEditWeight] = useState('');
   const [editReps, setEditReps] = useState('');
   const [editSaving, setEditSaving] = useState(false);
+  const [editIsBodyweight, setEditIsBodyweight] = useState(false);
 
   const [addingToGroup, setAddingToGroup] = useState<GroupedExercise | null>(null);
   const [addWeight, setAddWeight] = useState('');
   const [addReps, setAddReps] = useState('');
   const [addSaving, setAddSaving] = useState(false);
+  const [addIsBodyweight, setAddIsBodyweight] = useState(false);
 
   const [saveTemplateVisible, setSaveTemplateVisible] = useState(false);
   const [templateName, setTemplateName] = useState('');
@@ -164,12 +166,13 @@ export default function WorkoutDetailScreen() {
   }, [id]);
 
   const displayWeight = (kg: number | null): string => {
-    if (kg == null) return '—';
+    if (kg == null) return 'BW';
     return useLbs ? `${Math.round(kg * 2.20462)} lbs` : `${Math.round(kg)} kg`;
   };
 
   const openEdit = (set: WorkoutSet) => {
     setEditingSet(set);
+    setEditIsBodyweight(set.weight_kg === null);
     setEditWeight(
       set.weight_kg != null
         ? String(useLbs ? Math.round(set.weight_kg * 2.20462) : Math.round(set.weight_kg))
@@ -182,7 +185,7 @@ export default function WorkoutDetailScreen() {
     if (!editingSet) return;
     setEditSaving(true);
 
-    const rawWeight = editWeight ? parseFloat(editWeight) : null;
+    const rawWeight = editIsBodyweight ? null : (editWeight ? parseFloat(editWeight) : null);
     const weightKg = rawWeight != null ? (useLbs ? rawWeight / 2.20462 : rawWeight) : null;
     const repsVal = editReps ? parseInt(editReps) : null;
 
@@ -300,17 +303,20 @@ export default function WorkoutDetailScreen() {
     if (existingGroup) {
       const lastSet = existingGroup.sets[existingGroup.sets.length - 1];
       setAddingToGroup(existingGroup);
-      if (lastSet?.weight_kg != null) {
+      const wasBodyweight = !!lastSet && lastSet.weight_kg === null;
+      setAddIsBodyweight(wasBodyweight);
+      if (!wasBodyweight && lastSet?.weight_kg != null) {
         setAddWeight(String(useLbs ? Math.round(lastSet.weight_kg * 2.20462) : Math.round(lastSet.weight_kg)));
         setAddReps(lastSet.reps != null ? String(lastSet.reps) : '');
       } else {
         setAddWeight('');
-        setAddReps('');
+        setAddReps(lastSet?.reps != null ? String(lastSet.reps) : '');
       }
     } else {
       setAddingToGroup({ name: ex.name, exerciseId: ex.id, muscleGroup: ex.muscle_group, sets: [] });
       setAddWeight('');
       setAddReps('');
+      setAddIsBodyweight(false);
     }
   };
 
@@ -318,7 +324,7 @@ export default function WorkoutDetailScreen() {
     if (!addingToGroup) return;
     setAddSaving(true);
 
-    const rawWeight = addWeight ? parseFloat(addWeight) : null;
+    const rawWeight = addIsBodyweight ? null : (addWeight ? parseFloat(addWeight) : null);
     const weightKg = rawWeight != null ? (useLbs ? rawWeight / 2.20462 : rawWeight) : null;
     const repsVal = addReps ? parseInt(addReps) : null;
     const nextSetNumber = addingToGroup.sets.length > 0
@@ -357,6 +363,7 @@ export default function WorkoutDetailScreen() {
     const vol = updated.flatMap(g => g.sets).reduce((sum, s) => sum + (s.weight_kg ?? 0) * (s.reps ?? 0), 0);
     setTotalVolume(Math.round(vol * 2.20462));
     setAddingToGroup(null);
+    setAddIsBodyweight(false);
   };
 
   if (loading) {
@@ -515,12 +522,14 @@ export default function WorkoutDetailScreen() {
                     onPress={() => {
                       const lastSet = group.sets[group.sets.length - 1];
                       setAddingToGroup(group);
-                      if (lastSet?.weight_kg != null) {
+                      const wasBodyweight = !!lastSet && lastSet.weight_kg === null;
+                      setAddIsBodyweight(wasBodyweight);
+                      if (!wasBodyweight && lastSet?.weight_kg != null) {
                         setAddWeight(String(useLbs ? Math.round(lastSet.weight_kg * 2.20462) : Math.round(lastSet.weight_kg)));
                         setAddReps(lastSet.reps != null ? String(lastSet.reps) : '');
                       } else {
                         setAddWeight('');
-                        setAddReps('');
+                        setAddReps(lastSet?.reps != null ? String(lastSet.reps) : '');
                       }
                     }}
                     activeOpacity={0.7}
@@ -617,19 +626,37 @@ export default function WorkoutDetailScreen() {
                 : ''}
             </Text>
 
+            <TouchableOpacity
+              className={`flex-row items-center justify-between px-4 py-3 rounded-xl border mb-4 ${editIsBodyweight ? 'border-primary/40' : 'border-border bg-card'}`}
+              style={editIsBodyweight ? { backgroundColor: '#0f0f2e' } : undefined}
+              onPress={() => { setEditIsBodyweight(b => !b); setEditWeight(''); }}
+              activeOpacity={0.7}
+            >
+              <Text className={`text-sm font-medium ${editIsBodyweight ? 'text-primary' : 'text-white'}`}>
+                Bodyweight
+              </Text>
+              <View
+                className={`w-5 h-5 rounded border items-center justify-center ${editIsBodyweight ? 'bg-primary border-primary' : 'border-border'}`}
+              >
+                {editIsBodyweight && <Text className="text-white text-xs font-bold">✓</Text>}
+              </View>
+            </TouchableOpacity>
+
             <View className="flex-row gap-x-3 mb-6">
               <View className="flex-1">
                 <Text className="text-textSecondary text-sm mb-2 ml-1">
-                  Weight ({useLbs ? 'lbs' : 'kg'})
+                  {editIsBodyweight ? 'Weight' : `Weight (${useLbs ? 'lbs' : 'kg'})`}
                 </Text>
                 <TextInput
                   className="bg-card text-white px-4 py-4 rounded-2xl text-base border border-border"
-                  placeholder="0"
-                  placeholderTextColor="#8e8e93"
-                  value={editWeight}
-                  onChangeText={setEditWeight}
+                  placeholder={editIsBodyweight ? 'BW' : '0'}
+                  placeholderTextColor={editIsBodyweight ? '#6366f1' : '#8e8e93'}
+                  value={editIsBodyweight ? '' : editWeight}
+                  onChangeText={editIsBodyweight ? undefined : setEditWeight}
                   keyboardType="decimal-pad"
-                  autoFocus
+                  autoFocus={!editIsBodyweight}
+                  editable={!editIsBodyweight}
+                  style={editIsBodyweight ? { opacity: 0.5 } : undefined}
                 />
               </View>
               <View className="flex-1">
@@ -686,19 +713,37 @@ export default function WorkoutDetailScreen() {
                 : ''}
             </Text>
 
+            <TouchableOpacity
+              className={`flex-row items-center justify-between px-4 py-3 rounded-xl border mb-4 ${addIsBodyweight ? 'border-primary/40' : 'border-border bg-card'}`}
+              style={addIsBodyweight ? { backgroundColor: '#0f0f2e' } : undefined}
+              onPress={() => { setAddIsBodyweight(b => !b); setAddWeight(''); }}
+              activeOpacity={0.7}
+            >
+              <Text className={`text-sm font-medium ${addIsBodyweight ? 'text-primary' : 'text-white'}`}>
+                Bodyweight
+              </Text>
+              <View
+                className={`w-5 h-5 rounded border items-center justify-center ${addIsBodyweight ? 'bg-primary border-primary' : 'border-border'}`}
+              >
+                {addIsBodyweight && <Text className="text-white text-xs font-bold">✓</Text>}
+              </View>
+            </TouchableOpacity>
+
             <View className="flex-row gap-x-3 mb-6">
               <View className="flex-1">
                 <Text className="text-textSecondary text-sm mb-2 ml-1">
-                  Weight ({useLbs ? 'lbs' : 'kg'})
+                  {addIsBodyweight ? 'Weight' : `Weight (${useLbs ? 'lbs' : 'kg'})`}
                 </Text>
                 <TextInput
                   className="bg-card text-white px-4 py-4 rounded-2xl text-base border border-border"
-                  placeholder="0"
-                  placeholderTextColor="#8e8e93"
-                  value={addWeight}
-                  onChangeText={setAddWeight}
+                  placeholder={addIsBodyweight ? 'BW' : '0'}
+                  placeholderTextColor={addIsBodyweight ? '#6366f1' : '#8e8e93'}
+                  value={addIsBodyweight ? '' : addWeight}
+                  onChangeText={addIsBodyweight ? undefined : setAddWeight}
                   keyboardType="decimal-pad"
-                  autoFocus
+                  autoFocus={!addIsBodyweight}
+                  editable={!addIsBodyweight}
+                  style={addIsBodyweight ? { opacity: 0.5 } : undefined}
                 />
               </View>
               <View className="flex-1">
@@ -729,7 +774,7 @@ export default function WorkoutDetailScreen() {
 
             <TouchableOpacity
               className="py-3 items-center"
-              onPress={() => setAddingToGroup(null)}
+              onPress={() => { setAddingToGroup(null); setAddIsBodyweight(false); }}
             >
               <Text className="text-muted text-base">Cancel</Text>
             </TouchableOpacity>
