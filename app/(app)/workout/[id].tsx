@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 
 interface WorkoutSet {
   id: string;
+  exercise_id: string;
   set_number: number;
   reps: number | null;
   weight_kg: number | null;
@@ -22,6 +23,7 @@ interface WorkoutDetail {
 
 interface GroupedExercise {
   name: string;
+  exerciseId: string;
   muscleGroup: string | null;
   sets: WorkoutSet[];
 }
@@ -61,7 +63,7 @@ export default function WorkoutDetailScreen() {
           .single(),
         supabase
           .from('workout_sets')
-          .select('id, set_number, reps, weight_kg, exercises(name, muscle_group)')
+          .select('id, exercise_id, set_number, reps, weight_kg, exercises(name, muscle_group)')
           .eq('workout_id', id)
           .order('set_number', { ascending: true }),
       ]);
@@ -78,6 +80,7 @@ export default function WorkoutDetailScreen() {
           if (!grouped[name]) {
             grouped[name] = {
               name,
+              exerciseId: set.exercise_id,
               muscleGroup: set.exercises?.muscle_group ?? null,
               sets: [],
             };
@@ -170,7 +173,18 @@ export default function WorkoutDetailScreen() {
               return (
                 <View key={group.name} className="mb-6">
                   <View className="flex-row items-baseline justify-between mb-3">
-                    <Text className="text-white font-semibold text-base">{group.name}</Text>
+                    <TouchableOpacity
+                      onPress={() => router.push({
+                        pathname: '/(app)/exercise/[id]',
+                        params: { id: group.exerciseId, name: group.name },
+                      })}
+                      activeOpacity={0.7}
+                    >
+                      <Text className="text-white font-semibold text-base">
+                        {group.name}{' '}
+                        <Text className="text-primary text-xs">↗</Text>
+                      </Text>
+                    </TouchableOpacity>
                     {group.muscleGroup && (
                       <Text className="text-muted text-xs">{group.muscleGroup}</Text>
                     )}

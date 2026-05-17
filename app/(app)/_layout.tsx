@@ -13,6 +13,7 @@ export default function AppLayout() {
       <Stack.Screen name="workout/start" />
       <Stack.Screen name="workout/logger" />
       <Stack.Screen name="workout/[id]" />
+      <Stack.Screen name="exercise/[id]" />
     </Stack>
   );
 }

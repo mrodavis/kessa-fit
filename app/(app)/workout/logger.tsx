@@ -14,13 +14,19 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
-import { UNIT_KEY } from '../(tabs)/profile';
+import { useAuth } from '@/hooks/useAuth';
+import { UNIT_KEY } from '@/constants';
 
 interface Exercise {
   id: string;
   name: string;
   muscle_group: string | null;
   equipment: string | null;
+}
+
+interface LastSession {
+  workoutDate: string;
+  sets: Array<{ setNumber: number; reps: number | null; weightKg: number | null }>;
 }
 
 interface LoggedSet {
@@ -36,6 +42,7 @@ interface LoggedSet {
 export default function WorkoutLoggerScreen() {
   const { workoutId, workoutName } = useLocalSearchParams<{ workoutId: string; workoutName: string }>();
   const router = useRouter();
+  const { user } = useAuth();
 
   const [sets, setSets] = useState<LoggedSet[]>([]);
   const [elapsed, setElapsed] = useState(0);
@@ -47,6 +54,10 @@ export default function WorkoutLoggerScreen() {
   const [reps, setReps] = useState('');
   const [weight, setWeight] = useState('');
   const [saving, setSaving] = useState(false);
+
+  // Last session reference
+  const [lastSession, setLastSession] = useState<LastSession | null>(null);
+  const [loadingLastSession, setLoadingLastSession] = useState(false);
 
   // Exercise picker
   const [pickerVisible, setPickerVisible] = useState(false);
@@ -64,6 +75,68 @@ export default function WorkoutLoggerScreen() {
       .then(val => { if (val !== null) setUseLbs(val === 'lbs'); })
       .catch(() => {});
   }, []);
+
+  // Fetch previous performance when an exercise is selected
+  useEffect(() => {
+    if (!selectedExercise || !user) {
+      setLastSession(null);
+      return;
+    }
+    let cancelled = false;
+    setLoadingLastSession(true);
+
+    const fetchLast = async () => {
+      // Query 1: most recent 20 finished workouts for this user (excluding current)
+      const { data: recentWorkouts } = await supabase
+        .from('workouts')
+        .select('id, started_at')
+        .eq('user_id', user.id)
+        .not('finished_at', 'is', null)
+        .neq('id', workoutId)
+        .order('started_at', { ascending: false })
+        .limit(20);
+
+      const ids = (recentWorkouts ?? []).map(w => w.id);
+      if (ids.length === 0) {
+        if (!cancelled) { setLastSession(null); setLoadingLastSession(false); }
+        return;
+      }
+
+      // Query 2: sets for this exercise from those workouts
+      const { data: prevSets } = await supabase
+        .from('workout_sets')
+        .select('set_number, reps, weight_kg, workout_id')
+        .eq('exercise_id', selectedExercise.id)
+        .in('workout_id', ids)
+        .order('set_number', { ascending: true });
+
+      if (cancelled) return;
+
+      // Find the most recent workout containing this exercise (ids is already desc)
+      const targetId = ids.find(id => prevSets?.some(s => s.workout_id === id));
+      if (!targetId) {
+        setLastSession(null);
+        setLoadingLastSession(false);
+        return;
+      }
+
+      const targetDate = recentWorkouts!.find(w => w.id === targetId)!.started_at;
+      const targetSets = (prevSets ?? []).filter(s => s.workout_id === targetId);
+
+      setLastSession({
+        workoutDate: targetDate,
+        sets: targetSets.map(s => ({
+          setNumber: s.set_number,
+          reps: s.reps,
+          weightKg: s.weight_kg,
+        })),
+      });
+      setLoadingLastSession(false);
+    };
+
+    fetchLast();
+    return () => { cancelled = true; };
+  }, [selectedExercise?.id]);
 
   const formatTime = (seconds: number) => {
     const m = Math.floor(seconds / 60).toString().padStart(2, '0');
@@ -99,6 +172,8 @@ export default function WorkoutLoggerScreen() {
   const selectExercise = (ex: Exercise) => {
     setSelectedExercise(ex);
     setPickerVisible(false);
+    setReps('');
+    setWeight('');
   };
 
   const addSet = async () => {
@@ -150,6 +225,8 @@ export default function WorkoutLoggerScreen() {
 
     setReps('');
     setWeight('');
+    setSelectedExercise(null);
+    setLastSession(null);
     setAddModalVisible(false);
   };
 
@@ -263,9 +340,38 @@ export default function WorkoutLoggerScreen() {
             </TouchableOpacity>
 
             {selectedExercise?.muscle_group && (
-              <Text className="text-muted text-xs mb-4 ml-1 -mt-2">
+              <Text className="text-muted text-xs mb-3 ml-1 -mt-2">
                 {selectedExercise.muscle_group} · {selectedExercise.equipment}
               </Text>
+            )}
+
+            {/* Last session reference */}
+            {loadingLastSession && (
+              <View className="items-center mb-4">
+                <ActivityIndicator size="small" color="#6366f1" />
+              </View>
+            )}
+            {!loadingLastSession && lastSession && (
+              <View className="bg-background border border-border rounded-xl px-4 py-3 mb-4">
+                <Text className="text-muted text-xs mb-2">
+                  Last session ·{' '}
+                  {new Date(lastSession.workoutDate).toLocaleDateString('en-US', {
+                    month: 'short',
+                    day: 'numeric',
+                  })}
+                </Text>
+                {lastSession.sets.map(s => (
+                  <View key={s.setNumber} className="flex-row mb-0.5">
+                    <Text className="text-muted text-xs w-14">Set {s.setNumber}</Text>
+                    <Text className="text-white text-xs font-medium">
+                      {s.weightKg != null
+                        ? `${useLbs ? Math.round(s.weightKg * 2.20462) : s.weightKg} ${useLbs ? 'lbs' : 'kg'}`
+                        : '—'}{' '}
+                      × {s.reps ?? '—'}
+                    </Text>
+                  </View>
+                ))}
+              </View>
             )}
 
             <View className="flex-row gap-x-3 mb-6">
@@ -308,7 +414,14 @@ export default function WorkoutLoggerScreen() {
               )}
             </TouchableOpacity>
 
-            <TouchableOpacity className="py-3 items-center" onPress={() => setAddModalVisible(false)}>
+            <TouchableOpacity
+              className="py-3 items-center"
+              onPress={() => {
+                setAddModalVisible(false);
+                setSelectedExercise(null);
+                setLastSession(null);
+              }}
+            >
               <Text className="text-muted text-base">Cancel</Text>
             </TouchableOpacity>
           </View>

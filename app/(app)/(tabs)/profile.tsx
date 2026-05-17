@@ -3,8 +3,7 @@ import { View, Text, TouchableOpacity, Switch, ScrollView, Alert } from 'react-n
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '@/hooks/useAuth';
-
-export const UNIT_KEY = 'kessa_unit_preference';
+import { UNIT_KEY } from '@/constants';
 
 export default function ProfileScreen() {
   const { user, signOut } = useAuth();

@@ -1,3 +1,5 @@
+export const UNIT_KEY = 'kessa_unit_preference';
+
 export const COLORS = {
   background: '#0a0a0a',
   surface: '#141414',
