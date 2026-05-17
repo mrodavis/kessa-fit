@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,7 +9,9 @@ import {
   ScrollView,
   FlatList,
   ActivityIndicator,
+  Animated,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -59,6 +61,16 @@ export default function WorkoutLoggerScreen() {
   const [lastSession, setLastSession] = useState<LastSession | null>(null);
   const [loadingLastSession, setLoadingLastSession] = useState(false);
 
+  // Rest timer
+  const [restSecondsLeft, setRestSecondsLeft] = useState<number | null>(null);
+  const pulseAnim = useRef(new Animated.Value(0)).current;
+
+  // Edit set
+  const [editingSet, setEditingSet] = useState<LoggedSet | null>(null);
+  const [editWeight, setEditWeight] = useState('');
+  const [editReps, setEditReps] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
+
   // Exercise picker
   const [pickerVisible, setPickerVisible] = useState(false);
   const [exercises, setExercises] = useState<Exercise[]>([]);
@@ -69,6 +81,22 @@ export default function WorkoutLoggerScreen() {
     const interval = setInterval(() => setElapsed((s) => s + 1), 1000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (restSecondsLeft === null) return;
+    if (restSecondsLeft <= 0) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1, duration: 200, useNativeDriver: false }),
+        Animated.timing(pulseAnim, { toValue: 0, duration: 200, useNativeDriver: false }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 200, useNativeDriver: false }),
+        Animated.timing(pulseAnim, { toValue: 0, duration: 400, useNativeDriver: false }),
+      ]).start(() => setRestSecondsLeft(null));
+      return;
+    }
+    const t = setTimeout(() => setRestSecondsLeft(s => s !== null ? s - 1 : null), 1000);
+    return () => clearTimeout(t);
+  }, [restSecondsLeft]);
 
   useEffect(() => {
     AsyncStorage.getItem(UNIT_KEY)
@@ -228,6 +256,89 @@ export default function WorkoutLoggerScreen() {
     setSelectedExercise(null);
     setLastSession(null);
     setAddModalVisible(false);
+    pulseAnim.setValue(0);
+    setRestSecondsLeft(90);
+  };
+
+  const duplicateSet = async (set: LoggedSet) => {
+    const newSetNumber = sets.filter(s => s.exerciseId === set.exerciseId).length + 1;
+    const rawWeight = set.weightKg ? parseFloat(set.weightKg) : null;
+    const weightKg = rawWeight != null ? (useLbs ? rawWeight / 2.20462 : rawWeight) : null;
+
+    const { data, error } = await supabase
+      .from('workout_sets')
+      .insert({
+        workout_id: workoutId,
+        exercise_id: set.exerciseId,
+        set_number: newSetNumber,
+        reps: set.reps ? parseInt(set.reps) : null,
+        weight_kg: weightKg,
+      })
+      .select()
+      .single();
+
+    if (error) { Alert.alert('Error', error.message); return; }
+
+    setSets(prev => [...prev, {
+      id: data.id,
+      exerciseId: set.exerciseId,
+      exerciseName: set.exerciseName,
+      setNumber: newSetNumber,
+      reps: set.reps,
+      weightKg: set.weightKg,
+      saved: true,
+    }]);
+    pulseAnim.setValue(0);
+    setRestSecondsLeft(90);
+  };
+
+  const updateSet = async () => {
+    if (!editingSet) return;
+    setEditSaving(true);
+
+    const rawWeight = editWeight ? parseFloat(editWeight) : null;
+    const weightKg = rawWeight != null ? (useLbs ? rawWeight / 2.20462 : rawWeight) : null;
+
+    const { error } = await supabase
+      .from('workout_sets')
+      .update({ reps: editReps ? parseInt(editReps) : null, weight_kg: weightKg })
+      .eq('id', editingSet.id);
+
+    setEditSaving(false);
+    if (error) { Alert.alert('Error', error.message); return; }
+
+    setSets(prev => prev.map(s =>
+      s.id === editingSet.id ? { ...s, reps: editReps, weightKg: editWeight } : s
+    ));
+    setEditingSet(null);
+  };
+
+  const deleteSet = () => {
+    if (!editingSet) return;
+    Alert.alert('Delete Set', `Remove Set ${editingSet.setNumber} of ${editingSet.exerciseName}?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          const { error } = await supabase
+            .from('workout_sets')
+            .delete()
+            .eq('id', editingSet.id);
+
+          if (error) { Alert.alert('Error', error.message); return; }
+
+          setSets(prev => {
+            const filtered = prev.filter(s => s.id !== editingSet.id);
+            let n = 0;
+            return filtered.map(s =>
+              s.exerciseId === editingSet.exerciseId ? { ...s, setNumber: ++n } : s
+            );
+          });
+          setEditingSet(null);
+        },
+      },
+    ]);
   };
 
   const finishWorkout = () => {
@@ -288,11 +399,14 @@ export default function WorkoutLoggerScreen() {
                   WEIGHT ({useLbs ? 'LBS' : 'KG'})
                 </Text>
                 <Text className="text-muted text-xs flex-1 text-center">REPS</Text>
+                <Text className="text-muted text-xs w-8" />
               </View>
               {exerciseSets.map((set) => (
-                <View
+                <TouchableOpacity
                   key={set.id}
                   className="flex-row items-center bg-card rounded-xl px-4 py-3 mb-2 border border-border"
+                  onPress={() => { setEditingSet(set); setEditWeight(set.weightKg); setEditReps(set.reps); }}
+                  activeOpacity={0.7}
                 >
                   <Text className="text-muted text-sm w-10">{set.setNumber}</Text>
                   <Text className="text-white text-sm flex-1 text-center">
@@ -301,7 +415,14 @@ export default function WorkoutLoggerScreen() {
                   <Text className="text-white text-sm flex-1 text-center">
                     {set.reps || '—'}
                   </Text>
-                </View>
+                  <TouchableOpacity
+                    onPress={() => duplicateSet(set)}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    className="w-8 items-center"
+                  >
+                    <Text className="text-primary text-lg">⊕</Text>
+                  </TouchableOpacity>
+                </TouchableOpacity>
               ))}
             </View>
           ))
@@ -309,11 +430,68 @@ export default function WorkoutLoggerScreen() {
         <View className="h-24" />
       </ScrollView>
 
+      {/* Rest Timer Banner */}
+      {restSecondsLeft !== null && (
+        <Animated.View
+          style={{
+            position: 'absolute',
+            bottom: 108,
+            left: 24,
+            right: 24,
+            backgroundColor: pulseAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: ['#141414', '#22c55e'],
+            }),
+            borderRadius: 20,
+            borderWidth: 1,
+            borderColor: '#2c2c2e',
+            paddingHorizontal: 20,
+            paddingVertical: 14,
+            flexDirection: 'row',
+            alignItems: 'center',
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: -2 },
+            shadowOpacity: 0.3,
+            shadowRadius: 8,
+            elevation: 8,
+          }}
+        >
+          <View>
+            <Text style={{ color: '#8e8e93', fontSize: 10, fontWeight: '600', letterSpacing: 1, textTransform: 'uppercase' }}>
+              Rest
+            </Text>
+            <Text style={{
+              color: restSecondsLeft <= 10 ? '#ef4444' : restSecondsLeft <= 30 ? '#f97316' : '#f5f5f7',
+              fontSize: 28,
+              fontWeight: 'bold',
+            }}>
+              {Math.floor(restSecondsLeft / 60)}:{(restSecondsLeft % 60).toString().padStart(2, '0')}
+            </Text>
+          </View>
+          <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'center', gap: 5 }}>
+            {Array.from({ length: 9 }, (_, i) => (
+              <View
+                key={i}
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: 3.5,
+                  backgroundColor: i < Math.ceil(restSecondsLeft / 10) ? '#6366f1' : '#2c2c2e',
+                }}
+              />
+            ))}
+          </View>
+          <TouchableOpacity onPress={() => setRestSecondsLeft(null)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+            <Text style={{ color: '#8e8e93', fontSize: 14 }}>Skip</Text>
+          </TouchableOpacity>
+        </Animated.View>
+      )}
+
       {/* FAB */}
       <View className="absolute bottom-8 right-6">
         <TouchableOpacity
           className="bg-primary w-16 h-16 rounded-full items-center justify-center"
-          onPress={() => setAddModalVisible(true)}
+          onPress={() => { setRestSecondsLeft(null); setAddModalVisible(true); }}
           activeOpacity={0.85}
         >
           <Text className="text-white text-3xl leading-none">+</Text>
@@ -423,6 +601,73 @@ export default function WorkoutLoggerScreen() {
               }}
             >
               <Text className="text-muted text-base">Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Edit Set Modal ── */}
+      <Modal visible={editingSet !== null} transparent animationType="slide">
+        <View className="flex-1 justify-end bg-black/60">
+          <View className="bg-surface rounded-t-3xl px-6 pt-6 pb-10 border-t border-border">
+            <Text className="text-white font-bold text-xl mb-1">Edit Set</Text>
+            <Text className="text-muted text-sm mb-6">
+              {editingSet?.exerciseName} · Set {editingSet?.setNumber}
+            </Text>
+
+            <View className="flex-row gap-x-3 mb-6">
+              <View className="flex-1">
+                <Text className="text-textSecondary text-sm mb-2 ml-1">
+                  Weight ({useLbs ? 'lbs' : 'kg'})
+                </Text>
+                <TextInput
+                  className="bg-card text-white px-4 py-4 rounded-2xl text-base border border-border"
+                  placeholder="0"
+                  placeholderTextColor="#8e8e93"
+                  value={editWeight}
+                  onChangeText={setEditWeight}
+                  keyboardType="decimal-pad"
+                  autoFocus
+                />
+              </View>
+              <View className="flex-1">
+                <Text className="text-textSecondary text-sm mb-2 ml-1">Reps</Text>
+                <TextInput
+                  className="bg-card text-white px-4 py-4 rounded-2xl text-base border border-border"
+                  placeholder="0"
+                  placeholderTextColor="#8e8e93"
+                  value={editReps}
+                  onChangeText={setEditReps}
+                  keyboardType="number-pad"
+                />
+              </View>
+            </View>
+
+            <TouchableOpacity
+              className="bg-primary rounded-2xl py-4 items-center mb-3"
+              onPress={updateSet}
+              disabled={editSaving}
+              activeOpacity={0.85}
+            >
+              {editSaving ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text className="text-white font-semibold text-base">Update Set</Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              className="py-3 items-center"
+              onPress={() => setEditingSet(null)}
+            >
+              <Text className="text-muted text-base">Cancel</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              className="py-2 items-center"
+              onPress={deleteSet}
+            >
+              <Text className="text-danger text-sm">Delete Set</Text>
             </TouchableOpacity>
           </View>
         </View>
