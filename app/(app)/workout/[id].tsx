@@ -1,8 +1,19 @@
 import { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  ScrollView,
+  ActivityIndicator,
+  Modal,
+  TextInput,
+  Alert,
+} from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '@/lib/supabase';
+import { UNIT_KEY } from '@/constants';
 
 interface WorkoutSet {
   id: string;
@@ -52,6 +63,18 @@ export default function WorkoutDetailScreen() {
   const [groups, setGroups] = useState<GroupedExercise[]>([]);
   const [loading, setLoading] = useState(true);
   const [totalVolume, setTotalVolume] = useState(0);
+  const [useLbs, setUseLbs] = useState(true);
+
+  const [editingSet, setEditingSet] = useState<WorkoutSet | null>(null);
+  const [editWeight, setEditWeight] = useState('');
+  const [editReps, setEditReps] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
+
+  useEffect(() => {
+    AsyncStorage.getItem(UNIT_KEY)
+      .then(val => { if (val !== null) setUseLbs(val === 'lbs'); })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const fetchWorkout = async () => {
@@ -73,7 +96,6 @@ export default function WorkoutDetailScreen() {
       if (setsRes.data) {
         const sets = setsRes.data as WorkoutSet[];
 
-        // Group by exercise name
         const grouped: Record<string, GroupedExercise> = {};
         sets.forEach((set) => {
           const name = set.exercises?.name ?? 'Unknown';
@@ -89,19 +111,91 @@ export default function WorkoutDetailScreen() {
         });
         setGroups(Object.values(grouped));
 
-        const vol = sets.reduce(
-          (sum, s) => sum + (s.weight_kg ?? 0) * (s.reps ?? 0),
-          0
-        );
+        const vol = sets.reduce((sum, s) => sum + (s.weight_kg ?? 0) * (s.reps ?? 0), 0);
         setTotalVolume(Math.round(vol * 2.20462));
       }
-
 
       setLoading(false);
     };
 
     fetchWorkout();
   }, [id]);
+
+  const displayWeight = (kg: number | null): string => {
+    if (kg == null) return '—';
+    return useLbs ? `${Math.round(kg * 2.20462)} lbs` : `${Math.round(kg)} kg`;
+  };
+
+  const openEdit = (set: WorkoutSet) => {
+    setEditingSet(set);
+    setEditWeight(
+      set.weight_kg != null
+        ? String(useLbs ? Math.round(set.weight_kg * 2.20462) : Math.round(set.weight_kg))
+        : ''
+    );
+    setEditReps(set.reps != null ? String(set.reps) : '');
+  };
+
+  const updateSet = async () => {
+    if (!editingSet) return;
+    setEditSaving(true);
+
+    const rawWeight = editWeight ? parseFloat(editWeight) : null;
+    const weightKg = rawWeight != null ? (useLbs ? rawWeight / 2.20462 : rawWeight) : null;
+    const repsVal = editReps ? parseInt(editReps) : null;
+
+    const { error } = await supabase
+      .from('workout_sets')
+      .update({ weight_kg: weightKg, reps: repsVal })
+      .eq('id', editingSet.id);
+
+    setEditSaving(false);
+    if (error) { Alert.alert('Error', error.message); return; }
+
+    const updated = groups.map(g => ({
+      ...g,
+      sets: g.sets.map(s =>
+        s.id === editingSet.id ? { ...s, weight_kg: weightKg, reps: repsVal } : s
+      ),
+    }));
+    setGroups(updated);
+    const vol = updated.flatMap(g => g.sets).reduce((sum, s) => sum + (s.weight_kg ?? 0) * (s.reps ?? 0), 0);
+    setTotalVolume(Math.round(vol * 2.20462));
+    setEditingSet(null);
+  };
+
+  const deleteSet = () => {
+    if (!editingSet) return;
+    const groupName = groups.find(g => g.sets.some(s => s.id === editingSet.id))?.name ?? 'this exercise';
+    Alert.alert('Delete Set', `Remove Set ${editingSet.set_number} of ${groupName}?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          const { error } = await supabase
+            .from('workout_sets')
+            .delete()
+            .eq('id', editingSet.id);
+
+          if (error) { Alert.alert('Error', error.message); return; }
+
+          const updated = groups
+            .map(g => {
+              if (!g.sets.some(s => s.id === editingSet.id)) return g;
+              const filtered = g.sets.filter(s => s.id !== editingSet.id);
+              return { ...g, sets: filtered.map((s, i) => ({ ...s, set_number: i + 1 })) };
+            })
+            .filter(g => g.sets.length > 0);
+
+          setGroups(updated);
+          const vol = updated.flatMap(g => g.sets).reduce((sum, s) => sum + (s.weight_kg ?? 0) * (s.reps ?? 0), 0);
+          setTotalVolume(Math.round(vol * 2.20462));
+          setEditingSet(null);
+        },
+      },
+    ]);
+  };
 
   if (loading) {
     return (
@@ -153,8 +247,10 @@ export default function WorkoutDetailScreen() {
             <Text className="text-muted text-xs mt-1">Total Sets</Text>
           </View>
           <View className="flex-1 bg-card rounded-2xl border border-border px-4 py-4">
-            <Text className="text-white text-lg font-bold">{totalVolume}</Text>
-            <Text className="text-muted text-xs mt-1">Volume (lbs)</Text>
+            <Text className="text-white text-lg font-bold">
+              {useLbs ? totalVolume : Math.round(totalVolume / 2.20462)}
+            </Text>
+            <Text className="text-muted text-xs mt-1">Volume ({useLbs ? 'lbs' : 'kg'})</Text>
           </View>
         </View>
 
@@ -166,10 +262,7 @@ export default function WorkoutDetailScreen() {
             </View>
           ) : (
             groups.map((group) => {
-              const bestWeight = Math.max(
-                0,
-                ...group.sets.map(s => s.weight_kg ?? 0)
-              );
+              const bestWeight = Math.max(0, ...group.sets.map(s => s.weight_kg ?? 0));
               return (
                 <View key={group.name} className="mb-6">
                   <View className="flex-row items-baseline justify-between mb-3">
@@ -193,7 +286,9 @@ export default function WorkoutDetailScreen() {
                   {/* Column headers */}
                   <View className="flex-row mb-2 px-1">
                     <Text className="text-muted text-xs w-10">SET</Text>
-                    <Text className="text-muted text-xs flex-1 text-center">WEIGHT</Text>
+                    <Text className="text-muted text-xs flex-1 text-center">
+                      WEIGHT ({useLbs ? 'LBS' : 'KG'})
+                    </Text>
                     <Text className="text-muted text-xs flex-1 text-center">REPS</Text>
                     <Text className="text-muted text-xs flex-1 text-right">VOLUME</Text>
                   </View>
@@ -204,19 +299,19 @@ export default function WorkoutDetailScreen() {
                       set.weight_kg != null &&
                       set.weight_kg === bestWeight;
                     return (
-                      <View
+                      <TouchableOpacity
                         key={set.id}
                         className={`flex-row items-center rounded-xl px-4 py-3 mb-2 border ${
                           isBest ? 'border-primary/40' : 'bg-card border-border'
                         }`}
                         style={isBest ? { backgroundColor: '#0f0f2e' } : undefined}
+                        onPress={() => openEdit(set)}
+                        activeOpacity={0.7}
                       >
                         <Text className="text-muted text-sm w-10">{set.set_number}</Text>
                         <View className="flex-1 flex-row items-center justify-center">
                           <Text className="text-white text-sm text-center">
-                            {set.weight_kg != null
-                              ? `${Math.round(set.weight_kg * 2.20462)} lbs`
-                              : '—'}
+                            {displayWeight(set.weight_kg)}
                           </Text>
                           {isBest && (
                             <Text className="text-primary text-xs ml-1">★</Text>
@@ -226,11 +321,11 @@ export default function WorkoutDetailScreen() {
                           {set.reps ?? '—'}
                         </Text>
                         <Text className="text-muted text-sm flex-1 text-right">
-                          {set.weight_kg && set.reps
-                            ? `${Math.round(set.weight_kg * set.reps * 2.20462)} lbs`
+                          {set.weight_kg != null && set.reps != null
+                            ? displayWeight(set.weight_kg * set.reps)
                             : '—'}
                         </Text>
-                      </View>
+                      </TouchableOpacity>
                     );
                   })}
                 </View>
@@ -239,6 +334,75 @@ export default function WorkoutDetailScreen() {
           )}
         </View>
       </ScrollView>
+
+      {/* ── Edit Set Modal ── */}
+      <Modal visible={editingSet !== null} transparent animationType="slide">
+        <View className="flex-1 justify-end bg-black/60">
+          <View className="bg-surface rounded-t-3xl px-6 pt-6 pb-10 border-t border-border">
+            <Text className="text-white font-bold text-xl mb-1">Edit Set</Text>
+            <Text className="text-muted text-sm mb-6">
+              {editingSet
+                ? `${groups.find(g => g.sets.some(s => s.id === editingSet.id))?.name} · Set ${editingSet.set_number}`
+                : ''}
+            </Text>
+
+            <View className="flex-row gap-x-3 mb-6">
+              <View className="flex-1">
+                <Text className="text-textSecondary text-sm mb-2 ml-1">
+                  Weight ({useLbs ? 'lbs' : 'kg'})
+                </Text>
+                <TextInput
+                  className="bg-card text-white px-4 py-4 rounded-2xl text-base border border-border"
+                  placeholder="0"
+                  placeholderTextColor="#8e8e93"
+                  value={editWeight}
+                  onChangeText={setEditWeight}
+                  keyboardType="decimal-pad"
+                  autoFocus
+                />
+              </View>
+              <View className="flex-1">
+                <Text className="text-textSecondary text-sm mb-2 ml-1">Reps</Text>
+                <TextInput
+                  className="bg-card text-white px-4 py-4 rounded-2xl text-base border border-border"
+                  placeholder="0"
+                  placeholderTextColor="#8e8e93"
+                  value={editReps}
+                  onChangeText={setEditReps}
+                  keyboardType="number-pad"
+                />
+              </View>
+            </View>
+
+            <TouchableOpacity
+              className="bg-primary rounded-2xl py-4 items-center mb-3"
+              onPress={updateSet}
+              disabled={editSaving}
+              activeOpacity={0.85}
+            >
+              {editSaving ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text className="text-white font-semibold text-base">Update Set</Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              className="py-3 items-center"
+              onPress={() => setEditingSet(null)}
+            >
+              <Text className="text-muted text-base">Cancel</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              className="py-2 items-center"
+              onPress={deleteSet}
+            >
+              <Text className="text-danger text-sm">Delete Set</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
