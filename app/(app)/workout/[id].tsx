@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Modal,
   TextInput,
   Alert,
+  FlatList,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -37,6 +38,13 @@ interface GroupedExercise {
   exerciseId: string;
   muscleGroup: string | null;
   sets: WorkoutSet[];
+}
+
+interface Exercise {
+  id: string;
+  name: string;
+  muscle_group: string | null;
+  equipment: string | null;
 }
 
 function formatDuration(start: string, end: string | null): string {
@@ -70,11 +78,34 @@ export default function WorkoutDetailScreen() {
   const [editReps, setEditReps] = useState('');
   const [editSaving, setEditSaving] = useState(false);
 
+  const [addingToGroup, setAddingToGroup] = useState<GroupedExercise | null>(null);
+  const [addWeight, setAddWeight] = useState('');
+  const [addReps, setAddReps] = useState('');
+  const [addSaving, setAddSaving] = useState(false);
+
+  const [pickerVisible, setPickerVisible] = useState(false);
+  const [exercises, setExercises] = useState<Exercise[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [loadingExercises, setLoadingExercises] = useState(false);
+
   useEffect(() => {
     AsyncStorage.getItem(UNIT_KEY)
       .then(val => { if (val !== null) setUseLbs(val === 'lbs'); })
       .catch(() => {});
   }, []);
+
+  const fetchExercises = useCallback(async (query: string) => {
+    setLoadingExercises(true);
+    const req = supabase.from('exercises').select('id, name, muscle_group, equipment').order('name');
+    if (query.trim()) req.ilike('name', `%${query.trim()}%`);
+    const { data } = await req.limit(50);
+    setExercises(data ?? []);
+    setLoadingExercises(false);
+  }, []);
+
+  useEffect(() => {
+    if (pickerVisible) fetchExercises(searchQuery);
+  }, [pickerVisible, searchQuery]);
 
   useEffect(() => {
     const fetchWorkout = async () => {
@@ -195,6 +226,71 @@ export default function WorkoutDetailScreen() {
         },
       },
     ]);
+  };
+
+  const selectNewExercise = (ex: Exercise) => {
+    setPickerVisible(false);
+    const existingGroup = groups.find(g => g.exerciseId === ex.id);
+    if (existingGroup) {
+      const lastSet = existingGroup.sets[existingGroup.sets.length - 1];
+      setAddingToGroup(existingGroup);
+      if (lastSet?.weight_kg != null) {
+        setAddWeight(String(useLbs ? Math.round(lastSet.weight_kg * 2.20462) : Math.round(lastSet.weight_kg)));
+        setAddReps(lastSet.reps != null ? String(lastSet.reps) : '');
+      } else {
+        setAddWeight('');
+        setAddReps('');
+      }
+    } else {
+      setAddingToGroup({ name: ex.name, exerciseId: ex.id, muscleGroup: ex.muscle_group, sets: [] });
+      setAddWeight('');
+      setAddReps('');
+    }
+  };
+
+  const saveNewSet = async () => {
+    if (!addingToGroup) return;
+    setAddSaving(true);
+
+    const rawWeight = addWeight ? parseFloat(addWeight) : null;
+    const weightKg = rawWeight != null ? (useLbs ? rawWeight / 2.20462 : rawWeight) : null;
+    const repsVal = addReps ? parseInt(addReps) : null;
+    const nextSetNumber = addingToGroup.sets.length > 0
+      ? Math.max(...addingToGroup.sets.map(s => s.set_number)) + 1
+      : 1;
+
+    const { data, error } = await supabase
+      .from('workout_sets')
+      .insert({
+        workout_id: id,
+        exercise_id: addingToGroup.exerciseId,
+        set_number: nextSetNumber,
+        weight_kg: weightKg,
+        reps: repsVal,
+      })
+      .select('id, exercise_id, set_number, reps, weight_kg')
+      .single();
+
+    setAddSaving(false);
+    if (error) { Alert.alert('Error', error.message); return; }
+
+    const newSet: WorkoutSet = {
+      id: data.id,
+      exercise_id: data.exercise_id,
+      set_number: data.set_number,
+      reps: data.reps,
+      weight_kg: data.weight_kg,
+      exercises: { name: addingToGroup.name, muscle_group: addingToGroup.muscleGroup },
+    };
+
+    const exists = groups.some(g => g.name === addingToGroup.name);
+    const updated = exists
+      ? groups.map(g => g.name === addingToGroup.name ? { ...g, sets: [...g.sets, newSet] } : g)
+      : [...groups, { ...addingToGroup, sets: [newSet] }];
+    setGroups(updated);
+    const vol = updated.flatMap(g => g.sets).reduce((sum, s) => sum + (s.weight_kg ?? 0) * (s.reps ?? 0), 0);
+    setTotalVolume(Math.round(vol * 2.20462));
+    setAddingToGroup(null);
   };
 
   if (loading) {
@@ -328,10 +424,36 @@ export default function WorkoutDetailScreen() {
                       </TouchableOpacity>
                     );
                   })}
+
+                  <TouchableOpacity
+                    className="flex-row items-center mt-1 py-2 px-1"
+                    onPress={() => {
+                      const lastSet = group.sets[group.sets.length - 1];
+                      setAddingToGroup(group);
+                      if (lastSet?.weight_kg != null) {
+                        setAddWeight(String(useLbs ? Math.round(lastSet.weight_kg * 2.20462) : Math.round(lastSet.weight_kg)));
+                        setAddReps(lastSet.reps != null ? String(lastSet.reps) : '');
+                      } else {
+                        setAddWeight('');
+                        setAddReps('');
+                      }
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text className="text-primary text-sm font-medium">+ Add Set</Text>
+                  </TouchableOpacity>
                 </View>
               );
             })
           )}
+
+          <TouchableOpacity
+            className="flex-row items-center justify-center py-4 mt-4 rounded-2xl border border-border"
+            onPress={() => { setSearchQuery(''); setPickerVisible(true); }}
+            activeOpacity={0.7}
+          >
+            <Text className="text-primary text-sm font-medium">+ Add Exercise</Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
 
@@ -402,6 +524,117 @@ export default function WorkoutDetailScreen() {
             </TouchableOpacity>
           </View>
         </View>
+      </Modal>
+
+      {/* ── Add Set Modal ── */}
+      <Modal visible={addingToGroup !== null} transparent animationType="slide">
+        <View className="flex-1 justify-end bg-black/60">
+          <View className="bg-surface rounded-t-3xl px-6 pt-6 pb-10 border-t border-border">
+            <Text className="text-white font-bold text-xl mb-1">Add Set</Text>
+            <Text className="text-muted text-sm mb-6">
+              {addingToGroup
+                ? `${addingToGroup.name} · Set ${addingToGroup.sets.length + 1}`
+                : ''}
+            </Text>
+
+            <View className="flex-row gap-x-3 mb-6">
+              <View className="flex-1">
+                <Text className="text-textSecondary text-sm mb-2 ml-1">
+                  Weight ({useLbs ? 'lbs' : 'kg'})
+                </Text>
+                <TextInput
+                  className="bg-card text-white px-4 py-4 rounded-2xl text-base border border-border"
+                  placeholder="0"
+                  placeholderTextColor="#8e8e93"
+                  value={addWeight}
+                  onChangeText={setAddWeight}
+                  keyboardType="decimal-pad"
+                  autoFocus
+                />
+              </View>
+              <View className="flex-1">
+                <Text className="text-textSecondary text-sm mb-2 ml-1">Reps</Text>
+                <TextInput
+                  className="bg-card text-white px-4 py-4 rounded-2xl text-base border border-border"
+                  placeholder="0"
+                  placeholderTextColor="#8e8e93"
+                  value={addReps}
+                  onChangeText={setAddReps}
+                  keyboardType="number-pad"
+                />
+              </View>
+            </View>
+
+            <TouchableOpacity
+              className="bg-primary rounded-2xl py-4 items-center mb-3"
+              onPress={saveNewSet}
+              disabled={addSaving}
+              activeOpacity={0.85}
+            >
+              {addSaving ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text className="text-white font-semibold text-base">Add Set</Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              className="py-3 items-center"
+              onPress={() => setAddingToGroup(null)}
+            >
+              <Text className="text-muted text-base">Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Exercise Picker Modal ── */}
+      <Modal visible={pickerVisible} transparent animationType="slide">
+        <SafeAreaView className="flex-1 bg-surface" edges={['top', 'bottom']}>
+          <View className="px-6 pt-4 pb-3 border-b border-border flex-row items-center gap-x-3">
+            <TextInput
+              className="flex-1 bg-card text-white px-4 py-3 rounded-xl text-base border border-border"
+              placeholder="Search exercises..."
+              placeholderTextColor="#8e8e93"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              autoFocus
+            />
+            <TouchableOpacity onPress={() => setPickerVisible(false)}>
+              <Text className="text-muted text-base">Cancel</Text>
+            </TouchableOpacity>
+          </View>
+
+          {loadingExercises ? (
+            <View className="flex-1 items-center justify-center">
+              <ActivityIndicator color="#6366f1" />
+            </View>
+          ) : (
+            <FlatList
+              data={exercises}
+              keyExtractor={(item) => item.id}
+              contentContainerStyle={{ paddingHorizontal: 24, paddingTop: 8, paddingBottom: 40 }}
+              ItemSeparatorComponent={() => <View className="h-px bg-border" />}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  className="py-4"
+                  onPress={() => selectNewExercise(item)}
+                  activeOpacity={0.7}
+                >
+                  <Text className="text-white text-base font-medium">{item.name}</Text>
+                  <Text className="text-muted text-xs mt-0.5">
+                    {item.muscle_group} · {item.equipment}
+                  </Text>
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={
+                <View className="items-center py-12">
+                  <Text className="text-muted text-sm">No exercises found.</Text>
+                </View>
+              }
+            />
+          )}
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );
