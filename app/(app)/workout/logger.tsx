@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -39,8 +39,34 @@ interface LoggedSet {
   reps: string;
   weightKg: string;
   isBodyweight: boolean;
+  isWarmup: boolean;
+  supersetGroupId: string | null;
   saved: boolean;
 }
+
+type DisplayGroup =
+  | { type: 'solo'; exerciseName: string; exerciseId: string; sets: LoggedSet[] }
+  | { type: 'superset'; supersetGroupId: string; exercises: { name: string; id: string; sets: LoggedSet[] }[] };
+
+const AMBER = '#f59e0b';
+const AMBER_BG = '#1c1407';
+const SUPERSET_COLOR = '#6366f1';
+const SUPERSET_BG = '#13123a';
+
+const generateUUID = (): string =>
+  'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+
+const getDisplayNumber = (set: LoggedSet, exerciseSets: LoggedSet[]): string => {
+  if (set.isWarmup) {
+    const n = exerciseSets.filter(s => s.isWarmup && s.setNumber < set.setNumber).length + 1;
+    return `W${n}`;
+  }
+  const n = exerciseSets.filter(s => !s.isWarmup && s.setNumber < set.setNumber).length + 1;
+  return String(n);
+};
 
 export default function WorkoutLoggerScreen() {
   const { workoutId, workoutName, templateId } = useLocalSearchParams<{ workoutId: string; workoutName: string; templateId?: string }>();
@@ -58,6 +84,7 @@ export default function WorkoutLoggerScreen() {
   const [weight, setWeight] = useState('');
   const [saving, setSaving] = useState(false);
   const [isBodyweight, setIsBodyweight] = useState(false);
+  const [isWarmup, setIsWarmup] = useState(false);
 
   // Last session reference
   const [lastSession, setLastSession] = useState<LastSession | null>(null);
@@ -73,6 +100,10 @@ export default function WorkoutLoggerScreen() {
   const [editReps, setEditReps] = useState('');
   const [editSaving, setEditSaving] = useState(false);
   const [editIsBodyweight, setEditIsBodyweight] = useState(false);
+  const [editIsWarmup, setEditIsWarmup] = useState(false);
+
+  // Superset linking
+  const [linkingExercise, setLinkingExercise] = useState<string | null>(null);
 
   // Template plan
   const [templateExercises, setTemplateExercises] = useState<Array<{
@@ -130,7 +161,6 @@ export default function WorkoutLoggerScreen() {
       .catch(() => {});
   }, []);
 
-  // Fetch previous performance when an exercise is selected
   useEffect(() => {
     if (!selectedExercise || !user) {
       setLastSession(null);
@@ -140,7 +170,6 @@ export default function WorkoutLoggerScreen() {
     setLoadingLastSession(true);
 
     const fetchLast = async () => {
-      // Query 1: most recent 20 finished workouts for this user (excluding current)
       const { data: recentWorkouts } = await supabase
         .from('workouts')
         .select('id, started_at')
@@ -156,7 +185,6 @@ export default function WorkoutLoggerScreen() {
         return;
       }
 
-      // Query 2: sets for this exercise from those workouts
       const { data: prevSets } = await supabase
         .from('workout_sets')
         .select('set_number, reps, weight_kg, workout_id')
@@ -166,7 +194,6 @@ export default function WorkoutLoggerScreen() {
 
       if (cancelled) return;
 
-      // Find the most recent workout containing this exercise (ids is already desc)
       const targetId = ids.find(id => prevSets?.some(s => s.workout_id === id));
       if (!targetId) {
         setLastSession(null);
@@ -204,11 +231,7 @@ export default function WorkoutLoggerScreen() {
       .from('exercises')
       .select('id, name, muscle_group, equipment')
       .order('name');
-
-    if (query.trim()) {
-      req.ilike('name', `%${query.trim()}%`);
-    }
-
+    if (query.trim()) req.ilike('name', `%${query.trim()}%`);
     const { data } = await req.limit(50);
     setExercises(data ?? []);
     setLoadingExercises(false);
@@ -229,6 +252,7 @@ export default function WorkoutLoggerScreen() {
     setReps('');
     setWeight('');
     setIsBodyweight(false);
+    setIsWarmup(false);
   };
 
   const addSet = async () => {
@@ -238,8 +262,9 @@ export default function WorkoutLoggerScreen() {
     }
     setSaving(true);
 
-    const setsForExercise = sets.filter((s) => s.exerciseId === selectedExercise.id).length;
-    const setNumber = setsForExercise + 1;
+    const setsForExercise = sets.filter((s) => s.exerciseId === selectedExercise.id);
+    const setNumber = setsForExercise.length + 1;
+    const existingSupersetGroupId = setsForExercise.find(s => s.supersetGroupId)?.supersetGroupId ?? null;
 
     const rawWeight = isBodyweight ? null : (weight ? parseFloat(weight) : null);
     const weightKg = rawWeight != null
@@ -254,6 +279,8 @@ export default function WorkoutLoggerScreen() {
         set_number: setNumber,
         reps: reps ? parseInt(reps) : null,
         weight_kg: weightKg,
+        is_warmup: isWarmup,
+        superset_group_id: existingSupersetGroupId,
       })
       .select()
       .single();
@@ -275,6 +302,8 @@ export default function WorkoutLoggerScreen() {
         reps,
         weightKg: weight,
         isBodyweight,
+        isWarmup,
+        supersetGroupId: existingSupersetGroupId,
         saved: true,
       },
     ]);
@@ -282,6 +311,7 @@ export default function WorkoutLoggerScreen() {
     setReps('');
     setWeight('');
     setIsBodyweight(false);
+    setIsWarmup(false);
     setSelectedExercise(null);
     setLastSession(null);
     setAddModalVisible(false);
@@ -302,6 +332,8 @@ export default function WorkoutLoggerScreen() {
         set_number: newSetNumber,
         reps: set.reps ? parseInt(set.reps) : null,
         weight_kg: weightKg,
+        is_warmup: set.isWarmup,
+        superset_group_id: set.supersetGroupId,
       })
       .select()
       .single();
@@ -316,6 +348,8 @@ export default function WorkoutLoggerScreen() {
       reps: set.reps,
       weightKg: set.weightKg,
       isBodyweight: set.isBodyweight,
+      isWarmup: set.isWarmup,
+      supersetGroupId: set.supersetGroupId,
       saved: true,
     }]);
     pulseAnim.setValue(0);
@@ -331,14 +365,20 @@ export default function WorkoutLoggerScreen() {
 
     const { error } = await supabase
       .from('workout_sets')
-      .update({ reps: editReps ? parseInt(editReps) : null, weight_kg: weightKg })
+      .update({
+        reps: editReps ? parseInt(editReps) : null,
+        weight_kg: weightKg,
+        is_warmup: editIsWarmup,
+      })
       .eq('id', editingSet.id);
 
     setEditSaving(false);
     if (error) { Alert.alert('Error', error.message); return; }
 
     setSets(prev => prev.map(s =>
-      s.id === editingSet.id ? { ...s, reps: editReps, weightKg: editWeight, isBodyweight: editIsBodyweight } : s
+      s.id === editingSet.id
+        ? { ...s, reps: editReps, weightKg: editWeight, isBodyweight: editIsBodyweight, isWarmup: editIsWarmup }
+        : s
     ));
     setEditingSet(null);
   };
@@ -371,6 +411,47 @@ export default function WorkoutLoggerScreen() {
     ]);
   };
 
+  const linkExercise = async (targetName: string) => {
+    if (!linkingExercise || linkingExercise === targetName) {
+      setLinkingExercise(null);
+      return;
+    }
+    const sourceIds = sets.filter(s => s.exerciseName === linkingExercise).map(s => s.id);
+    const targetIds = sets.filter(s => s.exerciseName === targetName).map(s => s.id);
+    const allIds = [...sourceIds, ...targetIds];
+    if (allIds.length === 0) { setLinkingExercise(null); return; }
+
+    const uuid = generateUUID();
+    const { error } = await supabase
+      .from('workout_sets')
+      .update({ superset_group_id: uuid })
+      .in('id', allIds);
+
+    if (error) { Alert.alert('Error', error.message); return; }
+
+    setSets(prev => prev.map(s => allIds.includes(s.id) ? { ...s, supersetGroupId: uuid } : s));
+    setLinkingExercise(null);
+  };
+
+  const unlinkSuperset = async (supersetGroupId: string) => {
+    Alert.alert('Unlink Superset', 'Remove the superset grouping for these exercises?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Unlink',
+        style: 'destructive',
+        onPress: async () => {
+          const allIds = sets.filter(s => s.supersetGroupId === supersetGroupId).map(s => s.id);
+          const { error } = await supabase
+            .from('workout_sets')
+            .update({ superset_group_id: null })
+            .in('id', allIds);
+          if (error) { Alert.alert('Error', error.message); return; }
+          setSets(prev => prev.map(s => allIds.includes(s.id) ? { ...s, supersetGroupId: null } : s));
+        },
+      },
+    ]);
+  };
+
   const finishWorkout = () => {
     Alert.alert('Finish Workout', 'Are you sure you want to end this session?', [
       { text: 'Cancel', style: 'cancel' },
@@ -388,11 +469,106 @@ export default function WorkoutLoggerScreen() {
     ]);
   };
 
-  const groupedSets = sets.reduce<Record<string, LoggedSet[]>>((acc, set) => {
-    if (!acc[set.exerciseName]) acc[set.exerciseName] = [];
-    acc[set.exerciseName].push(set);
-    return acc;
-  }, {});
+  const displayGroups = useMemo<DisplayGroup[]>(() => {
+    const byExercise = new Map<string, { id: string; name: string; sets: LoggedSet[] }>();
+    for (const set of sets) {
+      if (!byExercise.has(set.exerciseName)) {
+        byExercise.set(set.exerciseName, { id: set.exerciseId, name: set.exerciseName, sets: [] });
+      }
+      byExercise.get(set.exerciseName)!.sets.push(set);
+    }
+
+    const supersetMap = new Map<string, string[]>();
+    for (const [name, ex] of byExercise) {
+      const sgId = ex.sets.find(s => s.supersetGroupId)?.supersetGroupId;
+      if (sgId) {
+        if (!supersetMap.has(sgId)) supersetMap.set(sgId, []);
+        if (!supersetMap.get(sgId)!.includes(name)) supersetMap.get(sgId)!.push(name);
+      }
+    }
+
+    const result: DisplayGroup[] = [];
+    const seen = new Set<string>();
+
+    for (const [name, ex] of byExercise) {
+      if (seen.has(name)) continue;
+      const sgId = ex.sets.find(s => s.supersetGroupId)?.supersetGroupId;
+      if (sgId && (supersetMap.get(sgId)?.length ?? 0) > 1) {
+        const exerciseNames = supersetMap.get(sgId)!;
+        const exercises = exerciseNames
+          .filter(n => byExercise.has(n))
+          .map(n => ({ name: n, id: byExercise.get(n)!.id, sets: byExercise.get(n)!.sets }));
+        result.push({ type: 'superset', supersetGroupId: sgId, exercises });
+        exerciseNames.forEach(n => seen.add(n));
+      } else {
+        result.push({ type: 'solo', exerciseName: name, exerciseId: ex.id, sets: ex.sets });
+        seen.add(name);
+      }
+    }
+
+    return result;
+  }, [sets]);
+
+  const supersetExerciseNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const group of displayGroups) {
+      if (group.type === 'superset') group.exercises.forEach(e => names.add(e.name));
+    }
+    return names;
+  }, [displayGroups]);
+
+  const renderSetRows = (exerciseSets: LoggedSet[]) => (
+    <>
+      <View className="flex-row mb-2 px-1">
+        <Text className="text-muted text-xs w-10">SET</Text>
+        <Text className="text-muted text-xs flex-1 text-center">
+          WEIGHT ({useLbs ? 'LBS' : 'KG'})
+        </Text>
+        <Text className="text-muted text-xs flex-1 text-center">REPS</Text>
+        <Text className="text-muted text-xs w-8" />
+      </View>
+      {exerciseSets.map((set) => {
+        const displayNum = getDisplayNumber(set, exerciseSets);
+        return (
+          <TouchableOpacity
+            key={set.id}
+            className="flex-row items-center bg-card rounded-xl px-4 py-3 mb-2 border border-border"
+            style={set.isWarmup ? { opacity: 0.65 } : undefined}
+            onPress={() => {
+              setEditingSet(set);
+              setEditWeight(set.weightKg);
+              setEditReps(set.reps);
+              setEditIsBodyweight(set.isBodyweight);
+              setEditIsWarmup(set.isWarmup);
+            }}
+            activeOpacity={0.7}
+          >
+            <Text
+              style={set.isWarmup
+                ? { color: AMBER, fontWeight: '700', fontSize: 12, width: 40 }
+                : { color: '#8e8e93', fontSize: 14, width: 40 }
+              }
+            >
+              {displayNum}
+            </Text>
+            <Text className="text-white text-sm flex-1 text-center">
+              {set.isBodyweight ? 'BW' : set.weightKg || '—'}
+            </Text>
+            <Text className="text-white text-sm flex-1 text-center">
+              {set.reps || '—'}
+            </Text>
+            <TouchableOpacity
+              onPress={() => duplicateSet(set)}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              className="w-8 items-center"
+            >
+              <Text className="text-primary text-lg">⊕</Text>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        );
+      })}
+    </>
+  );
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
@@ -431,6 +607,7 @@ export default function WorkoutLoggerScreen() {
                   setSelectedExercise({ id: te.exerciseId, name: te.exerciseName, muscle_group: null, equipment: null });
                   setReps('');
                   setWeight('');
+                  setIsWarmup(false);
                   setRestSecondsLeft(null);
                   setAddModalVisible(true);
                 }}
@@ -449,51 +626,84 @@ export default function WorkoutLoggerScreen() {
         </ScrollView>
       )}
 
+      {/* Linking Mode Banner */}
+      {linkingExercise && (
+        <View style={{ backgroundColor: SUPERSET_BG, paddingHorizontal: 24, paddingVertical: 12, flexDirection: 'row', alignItems: 'center' }}>
+          <Text style={{ color: SUPERSET_COLOR, fontSize: 13, flex: 1 }}>
+            Tap an exercise to superset with{' '}
+            <Text style={{ fontWeight: '700' }}>{linkingExercise}</Text>
+          </Text>
+          <TouchableOpacity onPress={() => setLinkingExercise(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Text style={{ color: '#8e8e93', fontSize: 13 }}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* Set List */}
       <ScrollView className="flex-1 px-6 pt-4" showsVerticalScrollIndicator={false}>
-        {Object.keys(groupedSets).length === 0 ? (
+        {displayGroups.length === 0 ? (
           <View className="items-center py-16">
             <Text className="text-muted text-center">
               No exercises yet.{'\n'}Tap + to log your first set.
             </Text>
           </View>
         ) : (
-          Object.entries(groupedSets).map(([exercise, exerciseSets]) => (
-            <View key={exercise} className="mb-6">
-              <Text className="text-white font-semibold text-base mb-3">{exercise}</Text>
-              <View className="flex-row mb-2 px-1">
-                <Text className="text-muted text-xs w-10">SET</Text>
-                <Text className="text-muted text-xs flex-1 text-center">
-                  WEIGHT ({useLbs ? 'LBS' : 'KG'})
-                </Text>
-                <Text className="text-muted text-xs flex-1 text-center">REPS</Text>
-                <Text className="text-muted text-xs w-8" />
-              </View>
-              {exerciseSets.map((set) => (
-                <TouchableOpacity
-                  key={set.id}
-                  className="flex-row items-center bg-card rounded-xl px-4 py-3 mb-2 border border-border"
-                  onPress={() => { setEditingSet(set); setEditWeight(set.weightKg); setEditReps(set.reps); setEditIsBodyweight(set.isBodyweight); }}
-                  activeOpacity={0.7}
+          displayGroups.map((group, groupIdx) => {
+            if (group.type === 'superset') {
+              return (
+                <View
+                  key={group.supersetGroupId}
+                  style={{ borderLeftWidth: 2, borderLeftColor: SUPERSET_COLOR, paddingLeft: 12, marginBottom: 24 }}
                 >
-                  <Text className="text-muted text-sm w-10">{set.setNumber}</Text>
-                  <Text className="text-white text-sm flex-1 text-center">
-                    {set.isBodyweight ? 'BW' : set.weightKg || '—'}
+                  <View className="flex-row items-center justify-between mb-4">
+                    <View style={{ backgroundColor: SUPERSET_BG, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                      <Text style={{ color: SUPERSET_COLOR, fontSize: 10, fontWeight: '700', letterSpacing: 1 }}>
+                        SUPERSET
+                      </Text>
+                    </View>
+                    <TouchableOpacity onPress={() => unlinkSuperset(group.supersetGroupId)} activeOpacity={0.7}>
+                      <Text style={{ color: '#8e8e93', fontSize: 12 }}>Unlink</Text>
+                    </TouchableOpacity>
+                  </View>
+                  {group.exercises.map((ex, exIdx) => (
+                    <View key={ex.name} style={exIdx > 0 ? { marginTop: 16 } : undefined}>
+                      <Text className="text-white font-semibold text-sm mb-3">{ex.name}</Text>
+                      {renderSetRows(ex.sets)}
+                    </View>
+                  ))}
+                </View>
+              );
+            }
+
+            // Solo group
+            const isLinkingThis = linkingExercise === group.exerciseName;
+            const isInSuperset = supersetExerciseNames.has(group.exerciseName);
+            const isLinkTarget = !!linkingExercise && !isLinkingThis && !isInSuperset;
+
+            return (
+              <View key={group.exerciseName} className="mb-6">
+                <View className="flex-row items-center justify-between mb-3">
+                  <Text className="text-white font-semibold text-base flex-1 mr-3" numberOfLines={1}>
+                    {group.exerciseName}
                   </Text>
-                  <Text className="text-white text-sm flex-1 text-center">
-                    {set.reps || '—'}
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => duplicateSet(set)}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    className="w-8 items-center"
-                  >
-                    <Text className="text-primary text-lg">⊕</Text>
-                  </TouchableOpacity>
-                </TouchableOpacity>
-              ))}
-            </View>
-          ))
+                  {isLinkingThis ? (
+                    <TouchableOpacity onPress={() => setLinkingExercise(null)} activeOpacity={0.7}>
+                      <Text style={{ color: '#8e8e93', fontSize: 12 }}>Cancel</Text>
+                    </TouchableOpacity>
+                  ) : isLinkTarget ? (
+                    <TouchableOpacity onPress={() => linkExercise(group.exerciseName)} activeOpacity={0.7}>
+                      <Text style={{ color: SUPERSET_COLOR, fontSize: 12, fontWeight: '600' }}>+ Link here</Text>
+                    </TouchableOpacity>
+                  ) : !linkingExercise && !isInSuperset ? (
+                    <TouchableOpacity onPress={() => setLinkingExercise(group.exerciseName)} activeOpacity={0.7}>
+                      <Text style={{ color: '#8e8e93', fontSize: 12 }}>Link</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+                {renderSetRows(group.sets)}
+              </View>
+            );
+          })
         )}
         <View className="h-24" />
       </ScrollView>
@@ -620,6 +830,24 @@ export default function WorkoutLoggerScreen() {
               </View>
             )}
 
+            {/* Set type toggle */}
+            <View style={{ flexDirection: 'row', backgroundColor: '#1c1c1e', borderRadius: 12, borderWidth: 1, borderColor: '#2c2c2e', marginBottom: 16, overflow: 'hidden' }}>
+              <TouchableOpacity
+                style={{ flex: 1, paddingVertical: 10, alignItems: 'center', backgroundColor: !isWarmup ? '#6366f1' : 'transparent', borderRadius: 11 }}
+                onPress={() => setIsWarmup(false)}
+                activeOpacity={0.7}
+              >
+                <Text style={{ color: !isWarmup ? '#fff' : '#8e8e93', fontSize: 13, fontWeight: '600' }}>Working</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ flex: 1, paddingVertical: 10, alignItems: 'center', backgroundColor: isWarmup ? AMBER_BG : 'transparent', borderRadius: 11 }}
+                onPress={() => setIsWarmup(true)}
+                activeOpacity={0.7}
+              >
+                <Text style={{ color: isWarmup ? AMBER : '#8e8e93', fontSize: 13, fontWeight: '600' }}>Warm-up</Text>
+              </TouchableOpacity>
+            </View>
+
             {/* Bodyweight toggle */}
             <TouchableOpacity
               className={`flex-row items-center justify-between px-4 py-3 rounded-xl border mb-4 ${isBodyweight ? 'border-primary/40' : 'border-border bg-card'}`}
@@ -667,7 +895,8 @@ export default function WorkoutLoggerScreen() {
             </View>
 
             <TouchableOpacity
-              className="bg-primary rounded-2xl py-4 items-center mb-3"
+              className="rounded-2xl py-4 items-center mb-3"
+              style={{ backgroundColor: isWarmup ? '#92400e' : '#6366f1' }}
               onPress={addSet}
               disabled={saving}
               activeOpacity={0.85}
@@ -675,7 +904,9 @@ export default function WorkoutLoggerScreen() {
               {saving ? (
                 <ActivityIndicator color="#fff" />
               ) : (
-                <Text className="text-white font-semibold text-base">Add Set</Text>
+                <Text className="text-white font-semibold text-base">
+                  {isWarmup ? 'Add Warm-up Set' : 'Add Set'}
+                </Text>
               )}
             </TouchableOpacity>
 
@@ -686,6 +917,7 @@ export default function WorkoutLoggerScreen() {
                 setSelectedExercise(null);
                 setLastSession(null);
                 setIsBodyweight(false);
+                setIsWarmup(false);
               }}
             >
               <Text className="text-muted text-base">Cancel</Text>
@@ -702,6 +934,24 @@ export default function WorkoutLoggerScreen() {
             <Text className="text-muted text-sm mb-6">
               {editingSet?.exerciseName} · Set {editingSet?.setNumber}
             </Text>
+
+            {/* Set type toggle */}
+            <View style={{ flexDirection: 'row', backgroundColor: '#1c1c1e', borderRadius: 12, borderWidth: 1, borderColor: '#2c2c2e', marginBottom: 16, overflow: 'hidden' }}>
+              <TouchableOpacity
+                style={{ flex: 1, paddingVertical: 10, alignItems: 'center', backgroundColor: !editIsWarmup ? '#6366f1' : 'transparent', borderRadius: 11 }}
+                onPress={() => setEditIsWarmup(false)}
+                activeOpacity={0.7}
+              >
+                <Text style={{ color: !editIsWarmup ? '#fff' : '#8e8e93', fontSize: 13, fontWeight: '600' }}>Working</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ flex: 1, paddingVertical: 10, alignItems: 'center', backgroundColor: editIsWarmup ? AMBER_BG : 'transparent', borderRadius: 11 }}
+                onPress={() => setEditIsWarmup(true)}
+                activeOpacity={0.7}
+              >
+                <Text style={{ color: editIsWarmup ? AMBER : '#8e8e93', fontSize: 13, fontWeight: '600' }}>Warm-up</Text>
+              </TouchableOpacity>
+            </View>
 
             {/* Bodyweight toggle */}
             <TouchableOpacity

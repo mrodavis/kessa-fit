@@ -27,6 +27,10 @@ export const MUSCLE_GROUPS = [
   'Quads',
   'Hamstrings',
   'Calves',
+  'Abductors',
+  'Adductors',
+  'Traps',
+  'Cardio',
   'Full Body',
 ] as const;
 

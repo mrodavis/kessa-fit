@@ -8,6 +8,9 @@ export interface WorkoutSet {
   reps: number | null;
   weightKg: number | null;
   durationSeconds: number | null;
+  isWarmup: boolean;
+  supersetGroupId: string | null;
+  createdAt: string;
 }
 
 export interface ActiveWorkout {

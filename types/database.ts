@@ -85,6 +85,8 @@ export interface Database {
           weight_kg: number | null;
           duration_seconds: number | null;
           notes: string | null;
+          is_warmup: boolean;
+          superset_group_id: string | null;
           created_at: string;
         };
         Insert: {
@@ -96,12 +98,16 @@ export interface Database {
           weight_kg?: number | null;
           duration_seconds?: number | null;
           notes?: string | null;
+          is_warmup?: boolean;
+          superset_group_id?: string | null;
         };
         Update: {
           reps?: number | null;
           weight_kg?: number | null;
           duration_seconds?: number | null;
           notes?: string | null;
+          is_warmup?: boolean;
+          superset_group_id?: string | null;
         };
         Relationships: [];
       };

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,8 @@ interface WorkoutSet {
   set_number: number;
   reps: number | null;
   weight_kg: number | null;
+  is_warmup: boolean;
+  superset_group_id: string | null;
   exercises: { name: string; muscle_group: string | null } | null;
 }
 
@@ -38,8 +40,17 @@ interface GroupedExercise {
   name: string;
   exerciseId: string;
   muscleGroup: string | null;
+  supersetGroupId: string | null;
   sets: WorkoutSet[];
 }
+
+type DetailDisplayGroup =
+  | { type: 'solo'; group: GroupedExercise }
+  | { type: 'superset'; supersetGroupId: string; groups: GroupedExercise[] };
+
+const AMBER = '#f59e0b';
+const SUPERSET_COLOR = '#6366f1';
+const SUPERSET_BG = '#13123a';
 
 interface Exercise {
   id: string;
@@ -130,7 +141,7 @@ export default function WorkoutDetailScreen() {
           .single(),
         supabase
           .from('workout_sets')
-          .select('id, exercise_id, set_number, reps, weight_kg, exercises(name, muscle_group)')
+          .select('id, exercise_id, set_number, reps, weight_kg, is_warmup, superset_group_id, exercises(name, muscle_group)')
           .eq('workout_id', id)
           .order('set_number', { ascending: true }),
       ]);
@@ -148,6 +159,7 @@ export default function WorkoutDetailScreen() {
               name,
               exerciseId: set.exercise_id,
               muscleGroup: set.exercises?.muscle_group ?? null,
+              supersetGroupId: set.superset_group_id,
               sets: [],
             };
           }
@@ -155,7 +167,9 @@ export default function WorkoutDetailScreen() {
         });
         setGroups(Object.values(grouped));
 
-        const vol = sets.reduce((sum, s) => sum + (s.weight_kg ?? 0) * (s.reps ?? 0), 0);
+        const vol = sets
+          .filter(s => !s.is_warmup)
+          .reduce((sum, s) => sum + (s.weight_kg ?? 0) * (s.reps ?? 0), 0);
         setTotalVolume(Math.round(vol * 2.20462));
       }
 
@@ -204,7 +218,7 @@ export default function WorkoutDetailScreen() {
       ),
     }));
     setGroups(updated);
-    const vol = updated.flatMap(g => g.sets).reduce((sum, s) => sum + (s.weight_kg ?? 0) * (s.reps ?? 0), 0);
+    const vol = updated.flatMap(g => g.sets).filter(s => !s.is_warmup).reduce((sum, s) => sum + (s.weight_kg ?? 0) * (s.reps ?? 0), 0);
     setTotalVolume(Math.round(vol * 2.20462));
     setEditingSet(null);
   };
@@ -234,7 +248,7 @@ export default function WorkoutDetailScreen() {
             .filter(g => g.sets.length > 0);
 
           setGroups(updated);
-          const vol = updated.flatMap(g => g.sets).reduce((sum, s) => sum + (s.weight_kg ?? 0) * (s.reps ?? 0), 0);
+          const vol = updated.flatMap(g => g.sets).filter(s => !s.is_warmup).reduce((sum, s) => sum + (s.weight_kg ?? 0) * (s.reps ?? 0), 0);
           setTotalVolume(Math.round(vol * 2.20462));
           setEditingSet(null);
         },
@@ -360,10 +374,46 @@ export default function WorkoutDetailScreen() {
       ? groups.map(g => g.name === addingToGroup.name ? { ...g, sets: [...g.sets, newSet] } : g)
       : [...groups, { ...addingToGroup, sets: [newSet] }];
     setGroups(updated);
-    const vol = updated.flatMap(g => g.sets).reduce((sum, s) => sum + (s.weight_kg ?? 0) * (s.reps ?? 0), 0);
+    const vol = updated.flatMap(g => g.sets).filter(s => !s.is_warmup).reduce((sum, s) => sum + (s.weight_kg ?? 0) * (s.reps ?? 0), 0);
     setTotalVolume(Math.round(vol * 2.20462));
     setAddingToGroup(null);
     setAddIsBodyweight(false);
+  };
+
+  const hasWarmupSets = groups.some(g => g.sets.some(s => s.is_warmup));
+
+  const displayGroups = useMemo<DetailDisplayGroup[]>(() => {
+    const supersetMap = new Map<string, GroupedExercise[]>();
+    for (const group of groups) {
+      if (group.supersetGroupId) {
+        if (!supersetMap.has(group.supersetGroupId)) supersetMap.set(group.supersetGroupId, []);
+        supersetMap.get(group.supersetGroupId)!.push(group);
+      }
+    }
+
+    const result: DetailDisplayGroup[] = [];
+    const seen = new Set<string>();
+    for (const group of groups) {
+      if (seen.has(group.name)) continue;
+      if (group.supersetGroupId && (supersetMap.get(group.supersetGroupId)?.length ?? 0) > 1) {
+        const paired = supersetMap.get(group.supersetGroupId)!;
+        result.push({ type: 'superset', supersetGroupId: group.supersetGroupId, groups: paired });
+        paired.forEach(g => seen.add(g.name));
+      } else {
+        result.push({ type: 'solo', group });
+        seen.add(group.name);
+      }
+    }
+    return result;
+  }, [groups]);
+
+  const getDisplayNum = (set: WorkoutSet, groupSets: WorkoutSet[]): string => {
+    if (set.is_warmup) {
+      const n = groupSets.filter(s => s.is_warmup && s.set_number < set.set_number).length + 1;
+      return `W${n}`;
+    }
+    const n = groupSets.filter(s => !s.is_warmup && s.set_number < set.set_number).length + 1;
+    return String(n);
   };
 
   if (loading) {
@@ -430,7 +480,9 @@ export default function WorkoutDetailScreen() {
             <Text className="text-white text-lg font-bold">
               {useLbs ? totalVolume : Math.round(totalVolume / 2.20462)}
             </Text>
-            <Text className="text-muted text-xs mt-1">Volume ({useLbs ? 'lbs' : 'kg'})</Text>
+            <Text className="text-muted text-xs mt-1">
+              Volume ({useLbs ? 'lbs' : 'kg'}){hasWarmupSets ? '*' : ''}
+            </Text>
           </View>
         </View>
 
@@ -444,98 +496,146 @@ export default function WorkoutDetailScreen() {
 
         {/* Exercises */}
         <View className="px-6">
-          {groups.length === 0 ? (
+          {hasWarmupSets && (
+            <Text style={{ color: '#8e8e93', fontSize: 11, marginBottom: 12 }}>
+              * Volume excludes warm-up sets
+            </Text>
+          )}
+
+          {displayGroups.length === 0 ? (
             <View className="bg-card rounded-2xl border border-border px-6 py-8 items-center">
               <Text className="text-muted text-sm text-center">No sets were logged.</Text>
             </View>
           ) : (
-            groups.map((group) => {
-              const bestWeight = Math.max(0, ...group.sets.map(s => s.weight_kg ?? 0));
-              return (
-                <View key={group.name} className="mb-6">
-                  <View className="flex-row items-baseline justify-between mb-3">
-                    <TouchableOpacity
-                      onPress={() => router.push({
-                        pathname: '/(app)/exercise/[id]',
-                        params: { id: group.exerciseId, name: group.name },
-                      })}
-                      activeOpacity={0.7}
-                    >
-                      <Text className="text-white font-semibold text-base">
-                        {group.name}{' '}
-                        <Text className="text-primary text-xs">↗</Text>
-                      </Text>
-                    </TouchableOpacity>
-                    {group.muscleGroup && (
-                      <Text className="text-muted text-xs">{group.muscleGroup}</Text>
-                    )}
-                  </View>
-
-                  {/* Column headers */}
-                  <View className="flex-row mb-2 px-1">
-                    <Text className="text-muted text-xs w-10">SET</Text>
-                    <Text className="text-muted text-xs flex-1 text-center">
-                      WEIGHT ({useLbs ? 'LBS' : 'KG'})
-                    </Text>
-                    <Text className="text-muted text-xs flex-1 text-center">REPS</Text>
-                    <Text className="text-muted text-xs flex-1 text-right">VOLUME</Text>
-                  </View>
-
-                  {group.sets.map((set) => {
-                    const isBest =
-                      bestWeight > 0 &&
-                      set.weight_kg != null &&
-                      set.weight_kg === bestWeight;
-                    return (
+            displayGroups.map((displayGroup, dgIdx) => {
+              const renderExerciseGroup = (group: GroupedExercise) => {
+                const workingSets = group.sets.filter(s => !s.is_warmup);
+                const bestWeight = Math.max(0, ...workingSets.map(s => s.weight_kg ?? 0));
+                return (
+                  <View key={group.name}>
+                    <View className="flex-row items-baseline justify-between mb-3">
                       <TouchableOpacity
-                        key={set.id}
-                        className={`flex-row items-center rounded-xl px-4 py-3 mb-2 border ${
-                          isBest ? 'border-primary/40' : 'bg-card border-border'
-                        }`}
-                        style={isBest ? { backgroundColor: '#0f0f2e' } : undefined}
-                        onPress={() => openEdit(set)}
+                        onPress={() => router.push({
+                          pathname: '/(app)/exercise/[id]',
+                          params: { id: group.exerciseId, name: group.name },
+                        })}
                         activeOpacity={0.7}
                       >
-                        <Text className="text-muted text-sm w-10">{set.set_number}</Text>
-                        <View className="flex-1 flex-row items-center justify-center">
-                          <Text className="text-white text-sm text-center">
-                            {displayWeight(set.weight_kg)}
-                          </Text>
-                          {isBest && (
-                            <Text className="text-primary text-xs ml-1">★</Text>
-                          )}
-                        </View>
-                        <Text className="text-white text-sm flex-1 text-center">
-                          {set.reps ?? '—'}
-                        </Text>
-                        <Text className="text-muted text-sm flex-1 text-right">
-                          {set.weight_kg != null && set.reps != null
-                            ? displayWeight(set.weight_kg * set.reps)
-                            : '—'}
+                        <Text className="text-white font-semibold text-base">
+                          {group.name}{' '}
+                          <Text className="text-primary text-xs">↗</Text>
                         </Text>
                       </TouchableOpacity>
-                    );
-                  })}
+                      {group.muscleGroup && (
+                        <Text className="text-muted text-xs">{group.muscleGroup}</Text>
+                      )}
+                    </View>
 
-                  <TouchableOpacity
-                    className="flex-row items-center mt-1 py-2 px-1"
-                    onPress={() => {
-                      const lastSet = group.sets[group.sets.length - 1];
-                      setAddingToGroup(group);
-                      const wasBodyweight = !!lastSet && lastSet.weight_kg === null;
-                      setAddIsBodyweight(wasBodyweight);
-                      if (!wasBodyweight && lastSet?.weight_kg != null) {
-                        setAddWeight(String(useLbs ? Math.round(lastSet.weight_kg * 2.20462) : Math.round(lastSet.weight_kg)));
-                        setAddReps(lastSet.reps != null ? String(lastSet.reps) : '');
-                      } else {
-                        setAddWeight('');
-                        setAddReps(lastSet?.reps != null ? String(lastSet.reps) : '');
-                      }
-                    }}
-                    activeOpacity={0.7}
+                    <View className="flex-row mb-2 px-1">
+                      <Text className="text-muted text-xs w-10">SET</Text>
+                      <Text className="text-muted text-xs flex-1 text-center">
+                        WEIGHT ({useLbs ? 'LBS' : 'KG'})
+                      </Text>
+                      <Text className="text-muted text-xs flex-1 text-center">REPS</Text>
+                      <Text className="text-muted text-xs flex-1 text-right">VOLUME</Text>
+                    </View>
+
+                    {group.sets.map((set) => {
+                      const isBest =
+                        !set.is_warmup &&
+                        bestWeight > 0 &&
+                        set.weight_kg != null &&
+                        set.weight_kg === bestWeight;
+                      const displayNum = getDisplayNum(set, group.sets);
+                      return (
+                        <TouchableOpacity
+                          key={set.id}
+                          className={`flex-row items-center rounded-xl px-4 py-3 mb-2 border ${
+                            isBest ? 'border-primary/40' : 'bg-card border-border'
+                          }`}
+                          style={[
+                            isBest ? { backgroundColor: '#0f0f2e' } : undefined,
+                            set.is_warmup ? { opacity: 0.6 } : undefined,
+                          ]}
+                          onPress={() => openEdit(set)}
+                          activeOpacity={0.7}
+                        >
+                          <Text
+                            style={set.is_warmup
+                              ? { color: AMBER, fontWeight: '700', fontSize: 12, width: 40 }
+                              : { color: '#8e8e93', fontSize: 14, width: 40 }
+                            }
+                          >
+                            {displayNum}
+                          </Text>
+                          <View className="flex-1 flex-row items-center justify-center">
+                            <Text className="text-white text-sm text-center">
+                              {displayWeight(set.weight_kg)}
+                            </Text>
+                            {isBest && (
+                              <Text className="text-primary text-xs ml-1">★</Text>
+                            )}
+                          </View>
+                          <Text className="text-white text-sm flex-1 text-center">
+                            {set.reps ?? '—'}
+                          </Text>
+                          <Text className="text-muted text-sm flex-1 text-right">
+                            {!set.is_warmup && set.weight_kg != null && set.reps != null
+                              ? displayWeight(set.weight_kg * set.reps)
+                              : set.is_warmup ? 'W/U' : '—'}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+
+                    <TouchableOpacity
+                      className="flex-row items-center mt-1 py-2 px-1"
+                      onPress={() => {
+                        const lastSet = group.sets[group.sets.length - 1];
+                        setAddingToGroup(group);
+                        const wasBodyweight = !!lastSet && lastSet.weight_kg === null;
+                        setAddIsBodyweight(wasBodyweight);
+                        if (!wasBodyweight && lastSet?.weight_kg != null) {
+                          setAddWeight(String(useLbs ? Math.round(lastSet.weight_kg * 2.20462) : Math.round(lastSet.weight_kg)));
+                          setAddReps(lastSet.reps != null ? String(lastSet.reps) : '');
+                        } else {
+                          setAddWeight('');
+                          setAddReps(lastSet?.reps != null ? String(lastSet.reps) : '');
+                        }
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text className="text-primary text-sm font-medium">+ Add Set</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              };
+
+              if (displayGroup.type === 'superset') {
+                return (
+                  <View
+                    key={displayGroup.supersetGroupId}
+                    style={{ borderLeftWidth: 2, borderLeftColor: SUPERSET_COLOR, paddingLeft: 12, marginBottom: 24 }}
                   >
-                    <Text className="text-primary text-sm font-medium">+ Add Set</Text>
-                  </TouchableOpacity>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                      <View style={{ backgroundColor: SUPERSET_BG, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                        <Text style={{ color: SUPERSET_COLOR, fontSize: 10, fontWeight: '700', letterSpacing: 1 }}>
+                          SUPERSET
+                        </Text>
+                      </View>
+                    </View>
+                    {displayGroup.groups.map((g, i) => (
+                      <View key={g.name} style={i > 0 ? { marginTop: 20 } : undefined}>
+                        {renderExerciseGroup(g)}
+                      </View>
+                    ))}
+                  </View>
+                );
+              }
+
+              return (
+                <View key={displayGroup.group.name} className="mb-6">
+                  {renderExerciseGroup(displayGroup.group)}
                 </View>
               );
             })
